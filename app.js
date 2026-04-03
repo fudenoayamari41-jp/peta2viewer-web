@@ -336,11 +336,15 @@ document.addEventListener('DOMContentLoaded', () => {
         btn.disabled = true;
         btn.textContent = "自動取得中...";
         
-        while (threadCache.get(activeThreadUrl).nextUrlToFetch && isAutoFetching) {
-            await loadNextPage(false);
+        try {
+            while (threadCache.get(activeThreadUrl).nextUrlToFetch && isAutoFetching) {
+                await loadNextPage(false);
+            }
+            btn.textContent = "全ページ取得完了";
+        } finally {
+            isAutoFetching = false;
+            document.getElementById('loading-indicator').classList.add('hidden');
         }
-        
-        btn.textContent = "全ページ取得完了";
     });
 
     const gridSelect = document.getElementById('grid-columns-select');
