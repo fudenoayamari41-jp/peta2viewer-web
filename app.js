@@ -80,6 +80,25 @@ async function authedFetch(url, options = {}) {
     return response;
 }
 
+// --- スレッドロック判定用ヘルパー ---
+function isThreadLocked(html) {
+    if (!html) return false;
+    // name="thread_key" が存在するか、あるいは「入室鍵」という文字列が含まれているか
+    // 大文字小文字を区別せず、クォートの有無も考慮した正規表現でチェック
+    const hasThreadKeyInput = /name\s*=\s*["']?thread_key["']?/i.test(html);
+    const hasNyuushitsukagiText = html.includes('入室鍵') || html.includes('パスワード');
+    return hasThreadKeyInput || hasNyuushitsukagiText;
+}
+
+function updateThreadLockState(url, isLocked) {
+    if (isLocked) {
+        lockedThreads.add(url);
+    } else {
+        lockedThreads.delete(url);
+    }
+    updateSidebarThreadStats(url);
+}
+
 function showAuthOverlay() {
     const overlay = document.getElementById('auth-overlay');
     if (overlay) overlay.classList.remove('hidden');
@@ -767,20 +786,15 @@ async function loadNextPage(isFirstPage = false) {
         
         // 入室鍵が必要かチェック
         const tId = new URL(cache.nextUrlToFetch).searchParams.get('t');
-        if (html.includes('name="thread_key"')) {
-            lockedThreads.add(activeThreadUrl);
-            updateSidebarThreadStats(activeThreadUrl);
+        const locked = isThreadLocked(html);
+        updateThreadLockState(activeThreadUrl, locked);
+
+        if (locked) {
             if (tId && !threadKeys.has(tId)) {
                 if (window.showThreadAuthOverlay) window.showThreadAuthOverlay(tId);
                 isExtracting = false;
                 indicator.classList.add('hidden');
                 return;
-            }
-        } else {
-            // 鍵が不要な場合
-            if (lockedThreads.has(activeThreadUrl)) {
-                lockedThreads.delete(activeThreadUrl);
-                updateSidebarThreadStats(activeThreadUrl);
             }
         }
 
@@ -865,7 +879,26 @@ async function checkForNewImages(url, cache, isBackground = false) {
 
             const buffer = await response.arrayBuffer();
             const decoder = new TextDecoder(charset);
-            const doc = new DOMParser().parseFromString(decoder.decode(buffer), 'text/html');
+            const html = decoder.decode(buffer);
+
+            // ロック判定
+            const locked = isThreadLocked(html);
+            updateThreadLockState(url, locked);
+            if (locked) {
+                if (url === activeThreadUrl) {
+                    const tId = new URL(currentUrl).searchParams.get('t');
+                    if (tId && !threadKeys.has(tId)) {
+                        if (window.showThreadAuthOverlay) window.showThreadAuthOverlay(tId);
+                        isChecking = false;
+                        if (!isBackground) document.getElementById('loading-indicator').classList.add('hidden');
+                        return;
+                    }
+                }
+                isChecking = false;
+                break;
+            }
+
+            const doc = new DOMParser().parseFromString(html, 'text/html');
             const imgs = doc.querySelectorAll('a[href*="comment_img.php"] img, .picture, img[src*="/upload/"]');
             
             for (let i = 0; i < imgs.length; i++) {
