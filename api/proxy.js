@@ -26,7 +26,7 @@ export default async function handler(req, res) {
     // ----------------------------------------------------
     // 合言葉（アクセスキー）の検証
     // ----------------------------------------------------
-    const userKey = req.headers['x-access-key'];
+    const userKey = req.headers['x-access-key'] || req.query.access_key;
     
     try {
         if (!userKey) {

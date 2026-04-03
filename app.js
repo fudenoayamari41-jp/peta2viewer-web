@@ -1033,7 +1033,7 @@ async function openContextModal(baseUrl, postNumber) {
                     }
                 } catch(e) {}
             };
-            iframe.src = PROXY_BASE + encodeURIComponent(found);
+            iframe.src = PROXY_BASE + encodeURIComponent(found) + `&access_key=${encodeURIComponent(ACCESS_KEY)}`;
         } else {
             alert("見つかりませんでした。"); modal.classList.add('hidden');
         }
