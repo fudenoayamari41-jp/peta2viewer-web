@@ -84,30 +84,18 @@ async function authedFetch(url, options = {}) {
 function isThreadLocked(html, resUrl = '') {
     if (!html) return false;
     
-    // 1. URLによる判定 (thread_key.php に飛ばされたら確実にロックされている)
+    // 1. URLによる判定：thread_key.php へのリダイレクトを最優先
     if (resUrl && resUrl.includes('thread_key.php')) {
-        console.log('[LockCheck] Redirected to thread_key.php detected:', resUrl);
         return true;
     }
 
-    // 2. HTMLの内容による判定 (input[name="thread_key"] が実在する場合のみ)
-    const hasThreadKeyInput = /name\s*=\s*["']?thread_key["']?/i.test(html);
+    // 2. HTML構造による判定
+    // 入力フォームの name="thread_key" が確実に存在するかをチェック
+    // <input ... name="thread_key" ...> の形式を厳格に正規表現で判定
+    const hasThreadKeyInput = /<input[^>]+name\s*=\s*["']?thread_key["']?/i.test(html);
     
-    // リダイレクト先がトップページ等の場合も念のためチェック (既存のトップ戻り検知)
-    if (resUrl) {
-        try {
-            const urlObj = new URL(resUrl);
-            const isTopPage = urlObj.pathname.endsWith('index.php') || urlObj.pathname.endsWith('/') || (!urlObj.searchParams.has('id') && !urlObj.searchParams.has('t'));
-            if (isTopPage && (html.includes('getThreadList') || html.includes('thread-list'))) {
-                console.log('[LockCheck] Redirected to Top Page detected:', resUrl);
-                return true;
-            }
-        } catch (e) {}
-    }
-
-    const result = hasThreadKeyInput;
-    console.log('[LockCheck] Final result:', result, '(KeyInput:', hasThreadKeyInput, ')');
-    return result;
+    // 判定結果を明示的に返す（タイトル検索は誤爆の元なので削除）
+    return hasThreadKeyInput;
 }
 
 function updateThreadLockState(url, isLocked) {
@@ -809,19 +797,22 @@ async function loadNextPage(isFirstPage = false) {
         const resUrl = response.headers.get('x-res-url') || '';
         const doc = new DOMParser().parseFromString(html, 'text/html');
         
-        // 入室鍵が必要かチェック (リダイレクト先からのID取得を強化)
         let tId = new URL(cache.nextUrlToFetch).searchParams.get('t');
         if (!tId && resUrl) {
             try { tId = new URL(resUrl).searchParams.get('t'); } catch(e) {}
         }
-        
+        if (!tId) {
+            const tInput = doc.querySelector('input[name="t"]');
+            if (tInput) tId = tInput.value;
+        }
+
         const locked = isThreadLocked(html, resUrl);
+        console.log(`[LockCheck] URL: ${cache.nextUrlToFetch} | resUrl: ${resUrl} | locked: ${locked} | tId: ${tId}`);
         updateThreadLockState(activeThreadUrl, locked);
 
         if (locked) {
-            console.log('[LockCheck] Entry key required for tId:', tId);
-            if (tId && !threadKeys.has(tId)) {
-                if (window.showThreadAuthOverlay) window.showThreadAuthOverlay(tId);
+            if (window.showThreadAuthOverlay) {
+                window.showThreadAuthOverlay(tId || 'UNKNOWN');
                 isExtracting = false;
                 indicator.classList.add('hidden');
                 return;
