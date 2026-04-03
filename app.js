@@ -17,6 +17,8 @@ let activeThreadUrl = null;
 
 // --- 認証管理用の状態 ---
 let ACCESS_KEY = localStorage.getItem('PETA2_ACCESS_KEY') || '';
+const threadKeys = new Map();     // スレッドごとのパスワード (threadId -> key)
+const lockedThreads = new Set();  // ロックされているスレッドURLのセット
 
 // ソート用の状態管理
 let currentSortMode = 'default';
@@ -51,6 +53,19 @@ try {
 async function authedFetch(url, options = {}) {
     if (!options.headers) options.headers = {};
     options.headers['X-Access-Key'] = ACCESS_KEY;
+
+    // スレIDを特定して、保存された鍵があればヘッダーに追加
+    try {
+        const urlObj = new URL(url.startsWith('/') ? window.location.origin + url : url);
+        const targetUrlStr = urlObj.searchParams.get('url');
+        if (targetUrlStr) {
+            const targetUrl = new URL(targetUrlStr);
+            const tId = targetUrl.searchParams.get('t');
+            if (tId && threadKeys.has(tId)) {
+                options.headers['X-Peta2-Item-Key'] = threadKeys.get(tId);
+            }
+        }
+    } catch (e) {}
 
     const response = await fetch(url, options);
     
@@ -123,6 +138,46 @@ document.addEventListener('DOMContentLoaded', () => {
 
     authSubmitBtn.addEventListener('click', handleAuthSubmit);
     authInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') handleAuthSubmit(); });
+
+    // --- スレッド入室鍵（パスワード）UIの初期化 ---
+    const threadAuthOverlay = document.getElementById('thread-auth-overlay');
+    const threadKeyInput = document.getElementById('thread-key-input');
+    const threadAuthSubmit = document.getElementById('thread-auth-submit');
+    const threadAuthCancel = document.getElementById('thread-auth-cancel');
+    let pendingThreadId = null;
+
+    const showThreadAuthOverlay = (tId) => {
+        pendingThreadId = tId;
+        threadKeyInput.value = '';
+        threadAuthOverlay.style.display = 'flex';
+        threadKeyInput.focus();
+    };
+
+    const hideThreadAuthOverlay = () => {
+        threadAuthOverlay.style.display = 'none';
+        pendingThreadId = null;
+    };
+
+    threadAuthSubmit.onclick = () => {
+        const key = threadKeyInput.value.trim();
+        if (key && pendingThreadId) {
+            threadKeys.set(pendingThreadId, key);
+            hideThreadAuthOverlay();
+            // 現在開こうとしているスレッドを再読み込み
+            if (activeThreadUrl) {
+                const title = document.getElementById('current-thread-title').textContent;
+                // キャッシュを一旦消して再取得
+                threadCache.delete(activeThreadUrl);
+                initThread(activeThreadUrl, title);
+            }
+        }
+    };
+
+    threadAuthCancel.onclick = hideThreadAuthOverlay;
+    threadKeyInput.onkeypress = (e) => { if (e.key === 'Enter') threadAuthSubmit.click(); };
+
+    // スレッド入室鍵のUIを外部から呼べるようにグローバルに公開（一時的）
+    window.showThreadAuthOverlay = showThreadAuthOverlay;
 
     // 初期起動チェック
     if (!ACCESS_KEY) {
@@ -433,6 +488,19 @@ function updateSidebarThreadStats(url) {
                 starMarkSpan.innerHTML = `${badgeHtml}★`;
             }
         }
+
+        // 鍵マークの表示更新
+        let lockMark = li.querySelector('.lock-icon');
+        if (lockedThreads.has(url)) {
+            if (!lockMark) {
+                lockMark = document.createElement('span');
+                lockMark.className = 'lock-icon';
+                lockMark.textContent = '🔒';
+                li.prepend(lockMark);
+            }
+        } else if (lockMark) {
+            lockMark.remove();
+        }
         
         let statsDiv = li.querySelector('.thread-stats');
         if (!statsDiv) {
@@ -688,8 +756,28 @@ async function loadNextPage(isFirstPage = false) {
         const response = await authedFetch(PROXY_BASE + encodeURIComponent(cache.nextUrlToFetch));
         const buffer = await response.arrayBuffer();
         const decoder = new TextDecoder('shift-jis');
-        const doc = new DOMParser().parseFromString(decoder.decode(buffer), 'text/html');
+        const html = decoder.decode(buffer);
+        const doc = new DOMParser().parseFromString(html, 'text/html');
         
+        // 入室鍵が必要かチェック
+        const tId = new URL(cache.nextUrlToFetch).searchParams.get('t');
+        if (html.includes('name="thread_key"')) {
+            lockedThreads.add(activeThreadUrl);
+            updateSidebarThreadStats(activeThreadUrl);
+            if (tId && !threadKeys.has(tId)) {
+                if (window.showThreadAuthOverlay) window.showThreadAuthOverlay(tId);
+                isExtracting = false;
+                indicator.classList.add('hidden');
+                return;
+            }
+        } else {
+            // 鍵が不要な場合
+            if (lockedThreads.has(activeThreadUrl)) {
+                lockedThreads.delete(activeThreadUrl);
+                updateSidebarThreadStats(activeThreadUrl);
+            }
+        }
+
         if (isFirstPage) {
             let maxP = 1;
             doc.querySelectorAll('a[href*="_ASC.html"], a[href*="_DESC.html"]').forEach(a => {

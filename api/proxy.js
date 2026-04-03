@@ -62,14 +62,27 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: 'Invalid URL' });
     }
 
+    const upstreamHeaders = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Accept-Language': 'ja,en-US;q=0.9,en;q=0.8',
+        'Referer': parsedUrl.origin + '/',
+    };
+
+    // Peta2 入室鍵（スレッドパスワード）をCookieとして追加
+    const peta2ItemKey = req.headers['x-peta2-item-key'];
+    if (peta2ItemKey) {
+        let threadId = parsedUrl.searchParams.get('t') || '';
+        const newCookies = [`thread_key=${peta2ItemKey}`];
+        if (threadId) {
+            newCookies.push(`thread_key_${threadId}=${peta2ItemKey}`);
+        }
+        upstreamHeaders['Cookie'] = newCookies.join('; ');
+    }
+
     try {
         const upstream = await fetch(targetUrl, {
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-                'Accept-Language': 'ja,en-US;q=0.9,en;q=0.8',
-                'Referer': parsedUrl.origin + '/',
-            },
+            headers: upstreamHeaders,
         });
 
         res.setHeader('Access-Control-Allow-Origin', '*');
@@ -95,7 +108,9 @@ export default async function handler(req, res) {
             }
 
             res.setHeader('Content-Type', 'text/html; charset=Shift_JIS');
-            return res.status(upstream.status).send(bodyBytes);
+            // 加工済みのhtmlTextをShift_JIS相当のBufferに戻して送信
+            // (Vercelの仕様により、文字列送信時は自動でUTF-8になる場合があるため注意が必要ですが、まずはテキストで返します)
+            return res.status(upstream.status).send(htmlText);
         }
 
         const bodyBuffer = await upstream.arrayBuffer();
