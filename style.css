@@ -679,3 +679,93 @@ body {
 #context-iframe {
     width: 100%; height: calc(100% - 50px); border: none; background: white;
 }
+
+/* --- Auth Overlay (Access Key) --- */
+#auth-overlay {
+    position: fixed;
+    top: 0; left: 0; width: 100vw; height: 100vh;
+    background: rgba(10, 10, 15, 0.98);
+    backdrop-filter: blur(15px);
+    z-index: 20000;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    transition: opacity 0.4s ease;
+}
+#auth-overlay.hidden {
+    opacity: 0;
+    pointer-events: none;
+}
+.auth-box {
+    width: 90%;
+    max-width: 400px;
+    padding: 40px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 28px;
+    text-align: center;
+    box-shadow: 0 30px 60px rgba(0,0,0,0.6);
+    animation: authFadeUp 0.6s ease-out;
+}
+@keyframes authFadeUp {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+.auth-box h1 {
+    font-size: 1.8rem;
+    margin-bottom: 12px;
+    background: linear-gradient(135deg, #ff4757, #5352ed);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    font-weight: 800;
+}
+.auth-box p {
+    color: #888;
+    font-size: 0.85rem;
+    margin-bottom: 30px;
+    line-height: 1.5;
+}
+.auth-box input {
+    width: 100%;
+    padding: 16px;
+    background: rgba(0,0,0,0.4);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 14px;
+    color: white;
+    margin-bottom: 20px;
+    outline: none;
+    text-align: center;
+    font-size: 1.2rem;
+    box-sizing: border-box;
+    transition: border-color 0.3s;
+}
+.auth-box input:focus {
+    border-color: #ff4757;
+}
+.auth-box button {
+    width: 100%;
+    padding: 16px;
+    background: linear-gradient(135deg, #ff4757, #5352ed);
+    border: none;
+    border-radius: 14px;
+    color: white;
+    font-weight: 700;
+    font-size: 1rem;
+    cursor: pointer;
+    transition: transform 0.2s, opacity 0.2s;
+    box-shadow: 0 10px 20px rgba(255, 71, 87, 0.2);
+}
+.auth-box button:hover {
+    transform: translateY(-2px);
+    opacity: 0.9;
+}
+#auth-error-msg {
+    margin-top: 20px;
+    padding: 10px;
+    background: rgba(255, 107, 107, 0.1);
+    border: 1px solid #ff6b6b;
+    border-radius: 8px;
+    color: #ff6b6b;
+    font-size: 0.8rem;
+}
+#auth-error-msg.hidden { display: none; }

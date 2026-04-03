@@ -119,6 +119,17 @@
         </div>
     </div>
 
+    <!-- 認証用オーバーレイ (初期表示は非表示、JSで制御) -->
+    <div id="auth-overlay" class="hidden">
+        <div class="auth-box">
+            <h1>Access Key Required</h1>
+            <p>このツールを利用するには「合言葉」を入力してください。</p>
+            <input type="password" id="access-key-input" placeholder="合言葉を入力...">
+            <button id="auth-submit-btn">認証して開始</button>
+            <div id="auth-error-msg" class="hidden"></div>
+        </div>
+    </div>
+
     <script src="app.js"></script>
 </body>
 </html>

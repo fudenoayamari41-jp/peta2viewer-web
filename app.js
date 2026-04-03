@@ -15,6 +15,9 @@ let isExtracting = false;
 let isAutoFetching = false;
 let activeThreadUrl = null;
 
+// --- 認証管理用の状態 ---
+let ACCESS_KEY = localStorage.getItem('PETA2_ACCESS_KEY') || '';
+
 // ソート用の状態管理
 let currentSortMode = 'default';
 let currentThreads = []; 
@@ -44,11 +47,92 @@ try {
     favThreads = JSON.parse(localStorage.getItem('peta2_fav_threads') || '[]');
 } catch (e) {}
 
+// --- 認証付きFetch共通関数 ---
+async function authedFetch(url, options = {}) {
+    if (!options.headers) options.headers = {};
+    options.headers['X-Access-Key'] = ACCESS_KEY;
+
+    const response = await fetch(url, options);
+    
+    if (response.status === 401) {
+        // 認証エラー時はキーを破棄してログイン画面を表示
+        ACCESS_KEY = '';
+        localStorage.removeItem('PETA2_ACCESS_KEY');
+        showAuthOverlay();
+        throw new Error('Unauthorized');
+    }
+    
+    return response;
+}
+
+function showAuthOverlay() {
+    const overlay = document.getElementById('auth-overlay');
+    if (overlay) overlay.classList.remove('hidden');
+}
+
+function hideAuthOverlay() {
+    const overlay = document.getElementById('auth-overlay');
+    if (overlay) overlay.classList.add('hidden');
+}
+
 document.addEventListener('DOMContentLoaded', () => {
     // 掲示板URL設定
     const urlInput = document.getElementById('target-site-url');
     if (urlInput) urlInput.value = SITE_URL;
     
+    // --- 認証UIの初期化 ---
+    const authSubmitBtn = document.getElementById('auth-submit-btn');
+    const authInput = document.getElementById('access-key-input');
+    const authErrorMsg = document.getElementById('auth-error-msg');
+
+    const handleAuthSubmit = async () => {
+        const key = authInput.value.trim();
+        if (!key) return;
+        
+        authSubmitBtn.disabled = true;
+        authSubmitBtn.textContent = "認証中...";
+        authErrorMsg.classList.add('hidden');
+        
+        try {
+            // 仮の通信（スレッド取得）でキーの有効性を確認
+            const tempAccessKey = ACCESS_KEY;
+            ACCESS_KEY = key;
+            
+            const res = await fetch(PROXY_BASE + encodeURIComponent(SITE_URL), {
+                headers: { 'X-Access-Key': key }
+            });
+
+            if (res.ok) {
+                // 認証成功
+                localStorage.setItem('PETA2_ACCESS_KEY', key);
+                hideAuthOverlay();
+                fetchThreads(); // メイン処理開始
+            } else {
+                ACCESS_KEY = tempAccessKey;
+                authErrorMsg.textContent = "合言葉が正しくありません。";
+                authErrorMsg.classList.remove('hidden');
+            }
+        } catch (e) {
+            authErrorMsg.textContent = "通信エラーが発生しました。";
+            authErrorMsg.classList.remove('hidden');
+        } finally {
+            authSubmitBtn.disabled = false;
+            authSubmitBtn.textContent = "認証して開始";
+        }
+    };
+
+    authSubmitBtn.addEventListener('click', handleAuthSubmit);
+    authInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') handleAuthSubmit(); });
+
+    // 初期起動チェック
+    if (!ACCESS_KEY) {
+        showAuthOverlay();
+    } else {
+        fetchThreads();
+    }
+    
+    // --- 以下、既存の初期化処理のラップ ---
+
     function renderUrlHistory() {
         const container = document.getElementById('url-history-container');
         const chipsObj = document.getElementById('url-history-chips');
@@ -63,7 +147,7 @@ document.addEventListener('DOMContentLoaded', () => {
         [...SITE_URL_HISTORY].reverse().forEach(url => {
             const chip = document.createElement('div');
             chip.className = 'url-history-chip';
-            chip.textContent = url.replace('https://', '').replace(/\/$/, ''); // 短く表示
+            chip.textContent = url.replace('https://', '').replace(/\/$/, '');
             chip.title = url;
             chip.onclick = () => {
                 urlInput.value = url;
@@ -86,7 +170,6 @@ document.addEventListener('DOMContentLoaded', () => {
             url += '/';
         }
         
-        // 履歴を更新 (最大20件)
         SITE_URL_HISTORY = SITE_URL_HISTORY.filter(u => u !== url);
         SITE_URL_HISTORY.push(url);
         if (SITE_URL_HISTORY.length > 20) SITE_URL_HISTORY.shift();
@@ -96,7 +179,6 @@ document.addEventListener('DOMContentLoaded', () => {
         localStorage.setItem('PETA2_SITE_URL', url);
         SITE_URL = url;
         
-        // ツールの状態をリセット
         threadCache.clear();
         saveThreadCache();
         activeThreadUrl = null;
@@ -107,28 +189,22 @@ document.addEventListener('DOMContentLoaded', () => {
         fetchThreads();
     });
 
-    fetchThreads();
-    
     document.getElementById('reload-threads-btn').addEventListener('click', fetchThreads);
     document.getElementById('open-scrap-btn').addEventListener('click', openScrapPage);
     
-    // ソートメニューのイベント
     document.getElementById('thread-sort-select').addEventListener('change', (e) => {
         currentSortMode = e.target.value;
         renderThreadList();
     });
 
-    // スレッドお気に入りボタン
     document.getElementById('thread-fav-btn').addEventListener('click', () => {
         if (!activeThreadUrl || activeThreadUrl === 'SCRAP_PAGE') return;
         toggleFavThread(activeThreadUrl);
     });
     
-    // お気に入り巡回ボタン
     const patrolBtn = document.getElementById('patrol-favs-btn');
     if (patrolBtn) patrolBtn.addEventListener('click', patrolFavThreads);
     
-    // スクロールイベント (無限スクロール)
     const gallery = document.getElementById('gallery-container');
     gallery.addEventListener('scroll', () => {
         if (!activeThreadUrl || activeThreadUrl === 'SCRAP_PAGE') return; 
@@ -140,7 +216,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // 「全ページ自動取得」ボタン
     document.getElementById('auto-fetch-all-btn').addEventListener('click', async () => {
         if (!activeThreadUrl || activeThreadUrl === 'SCRAP_PAGE') return;
         const cache = threadCache.get(activeThreadUrl);
@@ -158,7 +233,6 @@ document.addEventListener('DOMContentLoaded', () => {
         btn.textContent = "全ページ取得完了";
     });
 
-    // グリッド列数の初期化とイベント設定
     const gridSelect = document.getElementById('grid-columns-select');
     if (gridSelect) {
         const savedCols = localStorage.getItem('peta2_grid_columns') || 'auto';
@@ -172,7 +246,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // ライトボックスの初期化
     const lightbox = document.getElementById('lightbox-overlay');
     const lightboxImg = document.getElementById('lightbox-img');
     
@@ -188,29 +261,21 @@ document.addEventListener('DOMContentLoaded', () => {
         }, 200); 
     };
 
-    // ナビゲーション関数
     const navigateLightbox = (direction) => {
-        // direction: -1 = 新着側（←）, +1 = 過去側（→）
         const newIndex = currentLightboxIndex + direction;
         if (newIndex < 0 || newIndex >= currentGalleryImages.length) return;
         openLightbox(newIndex);
     };
     
-    // 背景クリックで閉じる（ナビゾーン・ツールバー以外）
     lightbox.addEventListener('click', (e) => {
-        const tag = e.target;
-        if (tag.id === 'lightbox-overlay') {
-            closeLightbox();
-        }
+        if (e.target.id === 'lightbox-overlay') closeLightbox();
     });
 
-    // ✕ボタンで閉じる
     document.getElementById('lightbox-close').addEventListener('click', (e) => {
         e.stopPropagation();
         closeLightbox();
     });
 
-    // 左右クリックゾーン
     document.getElementById('lightbox-nav-left').addEventListener('click', (e) => {
         e.stopPropagation();
         navigateLightbox(-1);
@@ -220,7 +285,6 @@ document.addEventListener('DOMContentLoaded', () => {
         navigateLightbox(1);
     });
     
-    // キーボードナビゲーション
     document.addEventListener('keydown', (e) => {
         if (lightbox.classList.contains('hidden')) return;
         if (e.key === 'Escape') closeLightbox();
@@ -228,27 +292,21 @@ document.addEventListener('DOMContentLoaded', () => {
         if (e.key === 'ArrowRight') navigateLightbox(1);
     });
 
-    // ライトボックス内ハートボタン
     document.getElementById('lightbox-fav-btn').addEventListener('click', (e) => {
         e.stopPropagation();
         if (currentLightboxIndex < 0 || currentLightboxIndex >= currentGalleryImages.length) return;
         const imgData = currentGalleryImages[currentLightboxIndex];
         
-        // ギャラリー内の対応するカードのハートボタンを探してクリックを模倣
         const gallery = document.getElementById('gallery-container');
         const targetCard = gallery.querySelector(`[data-src="${imgData.src}"]`)?.closest('.image-card');
         if (targetCard) {
             const cardFavBtn = targetCard.querySelector('.favorite-btn');
             if (cardFavBtn) cardFavBtn.click();
         }
-        
-        // ライトボックス内ハートの表示も更新
         updateLightboxFavBtn(imgData);
     });
-
 });
 
-// ライトボックスを指定インデックスで開く/更新する
 function openLightbox(index) {
     if (index < 0 || index >= currentGalleryImages.length) return;
     currentLightboxIndex = index;
@@ -263,10 +321,8 @@ function openLightbox(index) {
     lightboxImg.src = imgData.src;
     lightbox.classList.remove('hidden');
     
-    // カウンター更新
     counter.textContent = `${index + 1} / ${currentGalleryImages.length}`;
     
-    // 元スレッドボタンの設定
     const targetThreadUrl = imgData.threadUrl || activeThreadUrl;
     if (targetThreadUrl && targetThreadUrl !== 'SCRAP_PAGE') {
         const newOpenThreadBtn = openThreadBtn.cloneNode(true);
@@ -293,15 +349,12 @@ function openLightbox(index) {
         openThreadBtn.classList.add('hidden');
     }
     
-    // 元画像ボタンの設定
     if (imgData.fullUrl && imgData.fullUrl !== imgData.src) {
         openOrigBtn.href = imgData.fullUrl;
         openOrigBtn.classList.remove('hidden');
     } else {
         openOrigBtn.classList.add('hidden');
     }
-    
-    // ハートボタンの状態更新
     updateLightboxFavBtn(imgData);
 }
 
@@ -320,15 +373,11 @@ function applyGridColumns(val) {
     }
 }
 
-// ----------------------------------------------------
-// UI 補助関数 / データ永続化
-// ----------------------------------------------------
-
 function saveScraps() {
     try {
         localStorage.setItem('peta2_scraps', JSON.stringify(scraps));
     } catch (e) {
-        console.warn("Storage capacity exceeded for scraps.");
+        console.warn("Storage quota exceeded.");
     }
 }
 
@@ -343,13 +392,10 @@ function toggleFavThread(url) {
         localStorage.setItem('peta2_fav_threads', JSON.stringify(favThreads));
     } catch (e) {}
     
-    // 右カラムの★ボタンを更新
     const favBtn = document.getElementById('thread-fav-btn');
     const isFav = favThreads.includes(url);
     favBtn.innerHTML = isFav ? '★' : '☆';
     favBtn.className = `thread-fav-btn${isFav ? ' active' : ''}`;
-    
-    // サイドバーを再描画
     renderThreadList();
 }
 
@@ -357,17 +403,14 @@ function saveThreadCache() {
     try {
         localStorage.setItem('peta2_thread_cache', JSON.stringify(Array.from(threadCache.entries())));
     } catch (e) {
-        console.warn("Storage capacity exceeded for thread cache. Deleting oldest caches...");
+        console.warn("Cache quota exceeded. Purging...");
+        // シンプルな最古5件残しパージ
         const entries = Array.from(threadCache.entries());
         if (entries.length > 5) {
-            const newerEntries = entries.slice(Math.floor(entries.length / 2));
+            const sliced = entries.slice(-5);
             threadCache.clear();
-            newerEntries.forEach(([k, v]) => threadCache.set(k, v));
-            try {
-                localStorage.setItem('peta2_thread_cache', JSON.stringify(newerEntries));
-            } catch (e2) {
-                console.error("Still exceeding quota.");
-            }
+            sliced.forEach(([k,v]) => threadCache.set(k, v));
+            localStorage.setItem('peta2_thread_cache', JSON.stringify(sliced));
         }
     }
 }
@@ -381,15 +424,12 @@ function updateSidebarThreadStats(url) {
         li.classList.add('read');
         const scrapCount = scraps.filter(s => s.threadUrl === url).length;
         
-        // --- 新着バッジの更新 ---
         if (favThreads.includes(url)) {
             let starMarkSpan = li.querySelector('.thread-fav-star');
             if (starMarkSpan) {
                 const newCount = cacheData.images.filter(i => i.isNew).length;
                 let badgeHtml = '';
-                if (newCount > 0) {
-                    badgeHtml = `<span class="new-count-badge">新着${newCount}</span>`;
-                }
+                if (newCount > 0) badgeHtml = `<span class="new-count-badge">新着${newCount}</span>`;
                 starMarkSpan.innerHTML = `${badgeHtml}★`;
             }
         }
@@ -400,7 +440,6 @@ function updateSidebarThreadStats(url) {
             statsDiv.className = 'thread-stats';
             li.appendChild(statsDiv);
         }
-        
         statsDiv.innerHTML = `
             <span class="stat-badge">全 ${cacheData.totalPages || '?'}P</span>
             <span class="stat-badge">画像 ${cacheData.images.length}枚</span>
@@ -412,17 +451,14 @@ function updateSidebarThreadStats(url) {
 function toggleScrap(imgData, btnElement, cardElement) {
     const idx = scraps.findIndex(s => s.src === imgData.src);
     if (idx >= 0) {
-        // お気に入り解除
         scraps.splice(idx, 1);
         btnElement.classList.remove('active');
         btnElement.innerHTML = '♡';
-        
         if (activeThreadUrl === 'SCRAP_PAGE') {
             cardElement.remove();
             document.getElementById('total-pages-info').textContent = `全 ${scraps.length} 枚`;
         }
     } else {
-        // お気に入り登録
         scraps.push({
             src: imgData.src,
             fullUrl: imgData.fullUrl,
@@ -434,12 +470,7 @@ function toggleScrap(imgData, btnElement, cardElement) {
         btnElement.innerHTML = '♥';
     }
     saveScraps();
-    
-    if (activeThreadUrl !== 'SCRAP_PAGE') {
-        updateSidebarThreadStats(activeThreadUrl);
-    } else {
-        updateSidebarThreadStats(imgData.threadUrl);
-    }
+    updateSidebarThreadStats(activeThreadUrl === 'SCRAP_PAGE' ? imgData.threadUrl : activeThreadUrl);
 }
 
 function renderImageCard(imgData, prepend = false) {
@@ -447,43 +478,29 @@ function renderImageCard(imgData, prepend = false) {
     if(gallery.querySelector(`[data-src="${imgData.src}"]`)) return;
 
     const isScraped = scraps.some(s => s.src === imgData.src);
-
     const card = document.createElement('div');
     card.className = 'image-card';
     card.onclick = () => {
-        // ギャラリー内のカード順序からインデックスを特定して開く
         const allCards = Array.from(gallery.querySelectorAll('.image-card'));
-        const cardIndex = allCards.indexOf(card);
-        if (cardIndex >= 0) {
-            openLightbox(cardIndex);
-        }
+        const idx = allCards.indexOf(card);
+        if (idx >= 0) openLightbox(idx);
     };
     
-    let innerHtml = `<img src="${imgData.src}" data-src="${imgData.src}" alt="Thread Image" loading="lazy">`;
-    if (imgData.isNew) {
-        innerHtml += `<div class="new-badge">NEW</div>`;
-    }
+    let innerHtml = `<img src="${imgData.src}" data-src="${imgData.src}" alt="Image" loading="lazy">`;
+    if (imgData.isNew) innerHtml += `<div class="new-badge">NEW</div>`;
     card.innerHTML = innerHtml;
     
-    // スクラップ用：元スレッドへのジャンプ機能
     if (imgData.threadTitleDisplay && imgData.threadUrl) {
         const titleDiv = document.createElement('div');
         titleDiv.className = 'card-thread-name';
         titleDiv.textContent = imgData.threadTitleDisplay;
-        titleDiv.title = "このスレッドを見る";
         titleDiv.onclick = (e) => {
             e.stopPropagation();
-            if (isExtracting || isAutoFetching) {
-                alert("現在処理中のため移動できません。");
-                return;
-            }
-            // サイドバーのハイライトを切り替え
+            if (isExtracting || isAutoFetching) return;
             document.querySelectorAll('.thread-item').forEach(el => el.classList.remove('active'));
             document.getElementById('open-scrap-btn').classList.remove('active');
-            
             const targetLi = document.querySelector(`.thread-item[data-url="${imgData.threadUrl}"]`);
             if (targetLi) targetLi.classList.add('active');
-            
             initThread(imgData.threadUrl, imgData.threadTitleDisplay);
         };
         card.appendChild(titleDiv);
@@ -492,7 +509,6 @@ function renderImageCard(imgData, prepend = false) {
     const favBtn = document.createElement('button');
     favBtn.className = `favorite-btn ${isScraped ? 'active' : ''}`;
     favBtn.innerHTML = isScraped ? '♥' : '♡';
-    favBtn.title = isScraped ? 'スクラップから外す' : 'スクラップに登録';
     favBtn.onclick = (e) => {
         e.stopPropagation();
         toggleScrap(imgData, favBtn, card);
@@ -508,23 +524,14 @@ function renderImageCard(imgData, prepend = false) {
     }
 }
 
-// ----------------------------------------------------
-// スクラップブックページ展開
-// ----------------------------------------------------
 function openScrapPage() {
     activeThreadUrl = 'SCRAP_PAGE';
     isAutoFetching = false;
-    
     document.querySelectorAll('.thread-item').forEach(el => el.classList.remove('active'));
     document.getElementById('open-scrap-btn').classList.add('active');
-    
     document.getElementById('current-thread-title').textContent = "💖 スクラップブック";
     document.getElementById('total-pages-info').textContent = `全 ${scraps.length} 枚`;
-    
-    const autoBtn = document.getElementById('auto-fetch-all-btn');
-    autoBtn.classList.add('hidden');
-    
-    // スクラップページではお気に入りボタンを非表示
+    document.getElementById('auto-fetch-all-btn').classList.add('hidden');
     document.getElementById('thread-fav-btn').classList.add('hidden');
     
     const gallery = document.getElementById('gallery-container');
@@ -532,174 +539,111 @@ function openScrapPage() {
     currentGalleryImages = [];
     
     if (scraps.length === 0) {
-        gallery.innerHTML = `<div class="empty-state">
-            <p>まだスクラップ（お気に入り）に登録された画像はありません。<br><br>
-            スレッドの画像右上にある ♡ をクリックすると、<br>ここに集めて自分だけの画集を作ることができます。</p></div>`;
+        gallery.innerHTML = `<div class="empty-state"><p>スクラップは空です。</p></div>`;
         return;
     }
     
-    const reversedScraps = [...scraps].reverse();
-    
-    reversedScraps.forEach(s => {
-        const fakeImgData = {
-            src: s.src,
-            fullUrl: s.fullUrl,
-            isNew: false,
-            threadTitleDisplay: s.threadTitle,
-            threadUrl: s.threadUrl,
-            postNumber: s.postNumber
-        };
-        renderImageCard(fakeImgData, false);
+    [...scraps].reverse().forEach(s => {
+        renderImageCard({
+            src: s.src, fullUrl: s.fullUrl, isNew: false,
+            threadTitleDisplay: s.threadTitle, threadUrl: s.threadUrl, postNumber: s.postNumber
+        }, false);
     });
 }
 
-// ----------------------------------------------------
-// データ取得とスレッドリスト構築 (ソート対応)
-// ----------------------------------------------------
-
+// --- 認証済みデータ取得 ---
 async function fetchThreads() {
     const listContainer = document.getElementById('thread-list');
     listContainer.innerHTML = '<li class="loading-text">スレッドを取得中...</li>';
 
     try {
-        const response = await fetch(PROXY_BASE + encodeURIComponent(SITE_URL));
-        if (!response.ok) throw new Error(`HTTP Error: ${response.status}`);
-        
+        const response = await authedFetch(PROXY_BASE + encodeURIComponent(SITE_URL));
         const buffer = await response.arrayBuffer();
         const decoder = new TextDecoder('shift-jis');
         const doc = new DOMParser().parseFromString(decoder.decode(buffer), 'text/html');
         
         const listItems = doc.querySelectorAll('.thread-list .list-group-item, #owl-carousel .list-group-item');
-        
         if (listItems.length === 0) {
-            listContainer.innerHTML = '<li class="loading-text">スレッドが見つかりませんでした。</li>';
+            listContainer.innerHTML = '<li class="loading-text">スレッドが見つかりません。</li>';
             return;
         }
 
         const uniqueThreads = [];
         const threadSet = new Set();
-        
         listItems.forEach(item => {
             const aTag = item.querySelector('a');
             if (aTag) {
-                // <a>タグの直後にある (183) などの投稿数を正規表現で取得
                 let countStr = '';
                 const match = item.innerHTML.match(/<\/a>[\s\S]*?\((\d+)\)/i);
-                if (match) {
-                    countStr = match[1]; 
-                }
+                if (match) countStr = match[1];
                 
                 const url = new URL(aTag.getAttribute('href'), SITE_URL).href;
                 if (!threadSet.has(url)) {
                     threadSet.add(url);
                     uniqueThreads.push({
-                        url: url,
-                        title: aTag.textContent.trim(),
-                        postCount: countStr,
+                        url, title: aTag.textContent.trim(), postCount: countStr,
                         meta: item.querySelector('p')?.textContent.trim() || ''
                     });
                 }
             }
         });
-        
         currentThreads = uniqueThreads;
         renderThreadList();
-        
-    } catch (error) {
-        listContainer.innerHTML = `<li class="loading-text" style="color: #ff5252;">取得失敗。<br>${escapeHTML(error.message)}</li>`;
+    } catch (e) {
+        if (e.message !== 'Unauthorized') {
+            listContainer.innerHTML = `<li class="loading-text">取得失敗: ${escapeHTML(e.message)}</li>`;
+        }
     }
 }
 
-// ソート条件に基づいてリストを描画する
 function renderThreadList() {
     const listContainer = document.getElementById('thread-list');
     listContainer.innerHTML = '';
-    
     let sorted = [...currentThreads];
     
-    if (currentSortMode === 'fav') {
-        sorted.sort((a, b) => {
-            const aFav = favThreads.includes(a.url) ? 1 : 0;
-            const bFav = favThreads.includes(b.url) ? 1 : 0;
-            return bFav - aFav; // お気に入りが上
-        });
-    } else if (currentSortMode === 'read') {
-        sorted.sort((a, b) => {
-            const aRead = threadCache.has(a.url) ? 1 : 0;
-            const bRead = threadCache.has(b.url) ? 1 : 0;
-            return bRead - aRead; // 降順（既読が上）
-        });
-    } else if (currentSortMode === 'hearts') {
-        sorted.sort((a, b) => {
-            const aHearts = scraps.filter(s => s.threadUrl === a.url).length;
-            const bHearts = scraps.filter(s => s.threadUrl === b.url).length;
-            return bHearts - aHearts; // 降順（数が多いものが上）
-        });
-    }
+    if (currentSortMode === 'fav') sorted.sort((a,b) => (favThreads.includes(b.url)?1:0) - (favThreads.includes(a.url)?1:0));
+    else if (currentSortMode === 'read') sorted.sort((a,b) => (threadCache.has(b.url)?1:0) - (threadCache.has(a.url)?1:0));
+    else if (currentSortMode === 'hearts') sorted.sort((a,b) => scraps.filter(s=>s.threadUrl===b.url).length - scraps.filter(s=>s.threadUrl===a.url).length);
     
     sorted.forEach(data => {
         const li = document.createElement('li');
         li.className = 'thread-item';
         li.setAttribute('data-url', data.url);
-        li.style.position = 'relative'; // ★マークの絶対配置用
         
         let starMark = '';
         if (favThreads.includes(data.url)) {
-            const cacheForBadge = threadCache.get(data.url);
-            let badgeHtml = '';
-            if (cacheForBadge) {
-                const newCount = cacheForBadge.images.filter(i => i.isNew).length;
-                if (newCount > 0) {
-                    badgeHtml = `<span class="new-count-badge">新着${newCount}</span>`;
-                }
+            const cache = threadCache.get(data.url);
+            let badge = '';
+            if (cache && cache.images.filter(i=>i.isNew).length > 0) {
+                badge = `<span class="new-count-badge">新着${cache.images.filter(i=>i.isNew).length}</span>`;
             }
-            starMark = `<span class="thread-fav-star">${badgeHtml}★</span>`;
+            starMark = `<span class="thread-fav-star">${badge}★</span>`;
         }
-        let countHtml = '';
-        if (data.postCount) {
-            countHtml = `<span class="thread-post-count">(${escapeHTML(data.postCount)})</span>`;
-        }
-        li.innerHTML = `${starMark}<div class="thread-title">${escapeHTML(data.title)} ${countHtml}</div><div class="thread-meta">${escapeHTML(data.meta)}</div>`;
+        li.innerHTML = `${starMark}<div class="thread-title">${escapeHTML(data.title)} (${data.postCount || '?'})</div><div class="thread-meta">${escapeHTML(data.meta)}</div>`;
+        if (data.url === activeThreadUrl) li.classList.add('active');
         
-        if (data.url === activeThreadUrl) {
-            li.classList.add('active');
-        }
-        
-        // クリックイベント
-        li.addEventListener('click', () => {
-            if (isExtracting || isAutoFetching) {
-                alert("現在処理中です。お待ち下さい。");
-                return;
-            }
+        li.onclick = () => {
+            if (isExtracting || isAutoFetching) return;
             document.querySelectorAll('.thread-item').forEach(el => el.classList.remove('active'));
-            document.getElementById('open-scrap-btn').classList.remove('active');
             li.classList.add('active');
             initThread(data.url, data.title);
-        });
+        };
         listContainer.appendChild(li);
-        
-        // 既読や統計バッジを反映
         updateSidebarThreadStats(data.url);
     });
 }
 
-// ----------------------------------------------------
-// スレッド閲覧のロジック
-// ----------------------------------------------------
-
-async function initThread(url, title) {
+function initThread(url, title) {
     document.getElementById('current-thread-title').textContent = title;
-    
-    // ★ボタンを更新・表示
     const favBtn = document.getElementById('thread-fav-btn');
     favBtn.classList.remove('hidden');
     const isFav = favThreads.includes(url);
     favBtn.innerHTML = isFav ? '★' : '☆';
     favBtn.className = `thread-fav-btn${isFav ? ' active' : ''}`;
+    
     const gallery = document.getElementById('gallery-container');
     gallery.innerHTML = ''; 
     currentGalleryImages = [];
-    
     activeThreadUrl = url;
     isAutoFetching = false;
     
@@ -711,60 +655,49 @@ async function initThread(url, title) {
     if (threadCache.has(url)) {
         const cache = threadCache.get(url);
         document.getElementById('total-pages-info').textContent = cache.totalPages > 1 ? `(全 ${cache.totalPages} ページ)` : '';
-        
-        if (cache.images.length === 0) {
-            gallery.innerHTML = '<div class="empty-state"><p>このスレッドには画像が見つかりませんでした。</p></div>';
-        } else {
-            cache.images.forEach(imgData => {
-                renderImageCard(imgData, false);
-                imgData.isNew = false; // 表示したらクリア
-            });
-            saveThreadCache();
-            updateSidebarThreadStats(url); // バッジを即座に消す
-        }
+        cache.images.forEach(imgData => {
+            renderImageCard(imgData, false);
+            imgData.isNew = false;
+        });
+        saveThreadCache();
+        updateSidebarThreadStats(url);
         checkForNewImages(url, cache);
         if (!cache.nextUrlToFetch) {
             autoBtn.disabled = true;
-            autoBtn.textContent = "最後のページまで取得済み";
+            autoBtn.textContent = "完了";
         }
-    } 
-    else {
-        document.getElementById('total-pages-info').textContent = "ページ数計算中...";
+    } else {
+        document.getElementById('total-pages-info').textContent = "読込中...";
         threadCache.set(url, { images: [], nextUrlToFetch: url, totalPages: 1 });
-        await loadNextPage(true);
+        loadNextPage(true);
     }
 }
 
 async function loadNextPage(isFirstPage = false) {
     if (!activeThreadUrl || activeThreadUrl === 'SCRAP_PAGE' || isExtracting) return;
-    
     const cache = threadCache.get(activeThreadUrl);
     if (!cache || !cache.nextUrlToFetch) return;
-
     isExtracting = true;
     
     const indicator = document.getElementById('loading-indicator');
-    const loadingStatus = document.getElementById('loading-status');
+    const status = document.getElementById('loading-status');
     indicator.classList.remove('hidden');
-    loadingStatus.textContent = `画像を読み込み中...`;
+    status.textContent = `読込中...`;
     
     try {
-        const response = await fetch(PROXY_BASE + encodeURIComponent(cache.nextUrlToFetch));
-        if (!response.ok) throw new Error('HTTP Error: ' + response.status);
-        
+        const response = await authedFetch(PROXY_BASE + encodeURIComponent(cache.nextUrlToFetch));
         const buffer = await response.arrayBuffer();
         const decoder = new TextDecoder('shift-jis');
         const doc = new DOMParser().parseFromString(decoder.decode(buffer), 'text/html');
         
         if (isFirstPage) {
-            let maxPage = 1;
-            const pageLinks = Array.from(doc.querySelectorAll('a[href*="_ASC.html"], a[href*="_DESC.html"]'));
-            pageLinks.forEach(a => {
-                const match = a.getAttribute('href').match(/_([0-9]+)_(ASC|DESC)\.html/);
-                if (match && parseInt(match[1]) > maxPage) maxPage = parseInt(match[1]);
+            let maxP = 1;
+            doc.querySelectorAll('a[href*="_ASC.html"], a[href*="_DESC.html"]').forEach(a => {
+                const m = a.getAttribute('href').match(/_([0-9]+)_(ASC|DESC)\.html/);
+                if (m && parseInt(m[1]) > maxP) maxP = parseInt(m[1]);
             });
-            cache.totalPages = maxPage;
-            document.getElementById('total-pages-info').textContent = cache.totalPages > 1 ? `(全 ${cache.totalPages} ページ)` : '';
+            cache.totalPages = maxP;
+            document.getElementById('total-pages-info').textContent = maxP > 1 ? `(全 ${maxP} ページ)` : '';
         }
         
         const images = doc.querySelectorAll('a[href*="comment_img.php"] img, .picture, img[src*="/upload/"]');
@@ -774,51 +707,33 @@ async function loadNextPage(isFirstPage = false) {
             const imgSrcUrl = new URL(src, SITE_URL).href;
             const parentA = img.closest('a');
             const fullImgUrl = parentA ? new URL(parentA.getAttribute('href'), SITE_URL).href : imgSrcUrl;
-            const grandparent = parentA ? parentA.parentElement : img.parentElement;
-            let postNumber = "";
-            if (grandparent) {
-                const result = doc.evaluate("preceding::a[contains(@href, 'cid=') and contains(text(), '[')][1]", img, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
-                const anchor = result.singleNodeValue;
-                if (anchor) {
-                    const match = anchor.textContent.match(/\[\d+\]/);
-                    if (match) {
-                        postNumber = match[0];
-                    }
-                }
+            
+            const result = doc.evaluate("preceding::a[contains(@href, 'cid=') and contains(text(), '[')][1]", img, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+            const anchor = result.singleNodeValue;
+            let postNum = "";
+            if (anchor) {
+                const m = anchor.textContent.match(/\[\d+\]/);
+                if (m) postNum = m[0];
             }
             
             if (!cache.images.find(i => i.src === imgSrcUrl)) {
-                const imgData = { src: imgSrcUrl, fullUrl: fullImgUrl, isNew: false, threadUrl: activeThreadUrl, postNumber: postNumber };
+                const imgData = { src: imgSrcUrl, fullUrl: fullImgUrl, isNew: false, threadUrl: activeThreadUrl, postNumber: postNum };
                 cache.images.push(imgData);
                 renderImageCard(imgData, false);
             }
         });
         
-        const gallery = document.getElementById('gallery-container');
-        if (isFirstPage && cache.images.length === 0) {
-            gallery.innerHTML = '<div class="empty-state"><p>このスレッドには画像が見つかりませんでした。</p></div>';
-        }
-        
         cache.nextUrlToFetch = getNextPageLink(doc);
-        
-        if (cache.nextUrlToFetch) {
-            if (isAutoFetching) await new Promise(r => setTimeout(r, 1000));
-        } else {
+        if (!cache.nextUrlToFetch) {
             const autoBtn = document.getElementById('auto-fetch-all-btn');
             autoBtn.disabled = true;
-            autoBtn.textContent = "最後のページまで取得済み";
+            autoBtn.textContent = "完了";
         }
-        
         saveThreadCache();
         updateSidebarThreadStats(activeThreadUrl);
         
-    } catch (error) {
-        console.error(error);
-        loadingStatus.textContent = 'エラーが発生しました';
-        cache.nextUrlToFetch = null;
-        isAutoFetching = false;
-        saveThreadCache();
-        updateSidebarThreadStats(activeThreadUrl);
+    } catch (e) {
+        if (e.message !== 'Unauthorized') console.error(e);
     } finally {
         isExtracting = false;
         if (!isAutoFetching) indicator.classList.add('hidden');
@@ -828,225 +743,120 @@ async function loadNextPage(isFirstPage = false) {
 async function patrolFavThreads() {
     const btn = document.getElementById('patrol-favs-btn');
     if (btn && btn.disabled) return;
+    if (favThreads.length === 0) return alert("お気に入りがありません。");
     
-    if (favThreads.length === 0) {
-        alert("お気に入り(★)に登録されたスレッドがありません。");
-        return;
+    btn.disabled = true; btn.textContent = '巡回中...';
+    for (const url of favThreads) {
+        const cache = threadCache.get(url);
+        if (cache) await checkForNewImages(url, cache, true);
     }
-    
-    if (btn) {
-        btn.disabled = true;
-        btn.textContent = '巡回中...';
-    }
-    
-    for (const threadUrl of favThreads) {
-        if (!threadCache.has(threadUrl)) continue; 
-        const cache = threadCache.get(threadUrl);
-        await checkForNewImages(threadUrl, cache, true);
-    }
-    
-    if (btn) {
-        btn.textContent = '🔄 巡回';
-        btn.disabled = false;
-    }
+    btn.textContent = '🔄巡回'; btn.disabled = false;
 }
 
-async function checkForNewImages(threadUrl, cache, isBackground = false) {
+async function checkForNewImages(url, cache, isBackground = false) {
     if (cache.images.length === 0) return; 
-    const topCachedImageSrc = cache.images[0].src;
-    
-    let isChecking = true;
-    let currentCheckUrl = threadUrl;
-    let newlyFoundImages = [];
-    
-    const indicator = document.getElementById('loading-indicator');
-    const loadingStatus = document.getElementById('loading-status');
+    const topSrc = cache.images[0].src;
+    let isChecking = true, currentUrl = url, newImgs = [];
     
     if (!isBackground) {
-        indicator.classList.remove('hidden');
-        loadingStatus.textContent = `新着をチェック中...`;
+        document.getElementById('loading-indicator').classList.remove('hidden');
+        document.getElementById('loading-status').textContent = `新着チェック...`;
     }
     
     try {
-        while (isChecking && currentCheckUrl) {
-            const response = await fetch(PROXY_BASE + encodeURIComponent(currentCheckUrl));
-            if (!response.ok) break;
+        while (isChecking && currentUrl) {
+            const response = await authedFetch(PROXY_BASE + encodeURIComponent(currentUrl));
             const buffer = await response.arrayBuffer();
             const decoder = new TextDecoder('shift-jis');
             const doc = new DOMParser().parseFromString(decoder.decode(buffer), 'text/html');
+            const imgs = doc.querySelectorAll('a[href*="comment_img.php"] img, .picture, img[src*="/upload/"]');
             
-            const images = doc.querySelectorAll('a[href*="comment_img.php"] img, .picture, img[src*="/upload/"]');
-            
-            for (let i = 0; i < images.length; i++) {
-                const img = images[i];
-                const src = img.getAttribute('src');
-                if (!src) continue;
-                const imgSrcUrl = new URL(src, SITE_URL).href;
-                
-                if (imgSrcUrl === topCachedImageSrc) {
-                    isChecking = false;
-                    break;
-                }
-                
-                const parentA = img.closest('a');
-                const fullImgUrl = parentA ? new URL(parentA.getAttribute('href'), SITE_URL).href : imgSrcUrl;
-                
-                const result = doc.evaluate("preceding::a[contains(@href, 'cid=') and contains(text(), '[')][1]", img, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
-                const anchor = result.singleNodeValue;
-                let postNumber = "";
-                if (anchor) {
-                    const match = anchor.textContent.match(/\[\d+\]/);
-                    if (match) {
-                        postNumber = match[0];
-                    }
-                }
-                
-                newlyFoundImages.push({ src: imgSrcUrl, fullUrl: fullImgUrl, isNew: true, threadUrl: threadUrl, postNumber: postNumber });
+            for (let i = 0; i < imgs.length; i++) {
+                const src = new URL(imgs[i].getAttribute('src'), SITE_URL).href;
+                if (src === topSrc) { isChecking = false; break; }
+                const parentA = imgs[i].closest('a');
+                const full = parentA ? new URL(parentA.getAttribute('href'), SITE_URL).href : src;
+                const r = doc.evaluate("preceding::a[contains(@href, 'cid=') and contains(text(), '[')][1]", imgs[i], null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+                let pNum = r.singleNodeValue ? (r.singleNodeValue.textContent.match(/\[\d+\]/)||[ ""])[0] : "";
+                newImgs.push({ src, fullUrl: full, isNew: true, threadUrl: url, postNumber: pNum });
             }
-            
             if (isChecking) {
-                currentCheckUrl = getNextPageLink(doc);
-                if (currentCheckUrl) await new Promise(r => setTimeout(r, 1000));
+                currentUrl = getNextPageLink(doc);
+                if (currentUrl) await new Promise(r => setTimeout(r, 1000));
             }
         }
-        
-        if (newlyFoundImages.length > 0) {
-            cache.images = [...newlyFoundImages, ...cache.images];
+        if (newImgs.length > 0) {
+            cache.images = [...newImgs, ...cache.images];
             saveThreadCache();
-            updateSidebarThreadStats(threadUrl); // サイドバーバッジ更新
-            
-            if (threadUrl === activeThreadUrl) {
-                newlyFoundImages.reverse().forEach(imgData => {
-                    renderImageCard(imgData, true);
-                    imgData.isNew = false; // 表示したのでクリア
-                });
-                saveThreadCache(); // isNew変更を保存
-                updateSidebarThreadStats(threadUrl); // バッジを消す
-                
-                if (!isBackground) {
-                    loadingStatus.textContent = `${newlyFoundImages.length}件の新着を追加しました！`;
-                    setTimeout(() => { indicator.classList.add('hidden'); }, 3000);
-                }
+            updateSidebarThreadStats(url);
+            if (url === activeThreadUrl) {
+                newImgs.reverse().forEach(d => { renderImageCard(d, true); d.isNew = false; });
+                saveThreadCache();
+                updateSidebarThreadStats(url);
             }
-        } else {
-            if (!isBackground) indicator.classList.add('hidden');
         }
-        
-    } catch (error) {
-        console.error("新着チェック中にエラー", error);
-        indicator.classList.add('hidden');
+    } catch (e) {} finally {
+        if (!isBackground) document.getElementById('loading-indicator').classList.add('hidden');
     }
 }
 
 function getNextPageLink(doc) {
-    const nextLinkTag = doc.querySelector('link[rel="next"]');
-    if (nextLinkTag && nextLinkTag.getAttribute('href')) {
-        return new URL(nextLinkTag.getAttribute('href'), SITE_URL).href;
-    }
-    const allLinks = Array.from(doc.querySelectorAll('a'));
-    const nextLinkNode = allLinks.find(a => {
-        const href = a.getAttribute('href') || '';
-        return a.textContent.includes('▶') && !href.startsWith('javascript:');
-    });
-    if (nextLinkNode) {
-        return new URL(nextLinkNode.getAttribute('href'), SITE_URL).href;
-    }
-    return null;
+    const next = doc.querySelector('link[rel="next"]');
+    if (next && next.getAttribute('href')) return new URL(next.getAttribute('href'), SITE_URL).href;
+    const node = Array.from(doc.querySelectorAll('a')).find(a => a.textContent.includes('▶') && !(a.getAttribute('href')||'').startsWith('javascript:'));
+    return node ? new URL(node.getAttribute('href'), SITE_URL).href : null;
 }
 
 function escapeHTML(str) {
-    if (!str) return '';
-    return str.replace(/[&<>'"]/g, 
-        tag => ({
-            '&': '&amp;',
-            '<': '&lt;',
-            '>': '&gt;',
-            "'": '&#39;',
-            '"': '&quot;'
-        }[tag])
-    );
+    return (str||'').replace(/[&<>'"]/g, t => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[t]));
 }
 
-/* --- 内蔵コンテキストビューアー機能 --- */
-document.getElementById('close-context-modal').addEventListener('click', () => {
+document.getElementById('close-context-modal').onclick = () => {
     document.getElementById('context-modal').classList.add('hidden');
-    document.getElementById('context-iframe').src = 'about:blank'; // 読み込み停止
-});
+    document.getElementById('context-iframe').src = 'about:blank';
+};
 
-async function openContextModal(baseThreadUrl, postNumber) {
+async function openContextModal(baseUrl, postNumber) {
     const modal = document.getElementById('context-modal');
     const loading = document.getElementById('context-loading');
-    const loadingText = document.getElementById('context-loading-text');
     const iframe = document.getElementById('context-iframe');
-    
     modal.classList.remove('hidden');
     loading.style.display = 'flex';
-    loadingText.textContent = `🔍 ${postNumber} の属するページを探索中...`;
     iframe.style.display = 'none';
-    iframe.src = 'about:blank';
     
     try {
-        let currentScanUrl = baseThreadUrl;
-        let foundUrl = null;
-        
-        for (let i = 0; i < 50; i++) { // 最大50ページ探索
-            const response = await fetch(PROXY_BASE + encodeURIComponent(currentScanUrl));
-            if (!response.ok) break;
-            
-            const buffer = await response.arrayBuffer();
-            const decoder = new TextDecoder('shift-jis');
-            const htmlText = decoder.decode(buffer);
-            
-            if (htmlText.indexOf(`class="submit">${postNumber}</a>`) !== -1 || htmlText.indexOf(postNumber) !== -1) {
-                foundUrl = currentScanUrl;
-                break;
+        let scanUrl = baseUrl, found = null;
+        for (let i = 0; i < 50; i++) {
+            const res = await authedFetch(PROXY_BASE + encodeURIComponent(scanUrl));
+            const txt = new TextDecoder('shift-jis').decode(await res.arrayBuffer());
+            if (txt.includes(`class="submit">${postNumber}</a>`) || txt.includes(postNumber)) {
+                found = scanUrl; break;
             }
-            
-            const doc = new DOMParser().parseFromString(htmlText, 'text/html');
-            const nextUrl = getNextPageLink(doc);
-            if (!nextUrl) break;
-            currentScanUrl = nextUrl;
-            loadingText.textContent = `🔍 ${postNumber} 探索中... (${i + 2}ページ目)`;
+            const d = new DOMParser().parseFromString(txt, 'text/html');
+            const n = getNextPageLink(d);
+            if (!n) break;
+            scanUrl = n;
         }
-        
-        if (foundUrl) {
-            loadingText.textContent = `🎯 ページを発見！ 描画中...`;
+        if (found) {
             iframe.onload = () => {
-                loading.style.display = 'none';
-                iframe.style.display = 'block';
-                
+                loading.style.display = 'none'; iframe.style.display = 'block';
                 try {
-                    const iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
-                    // xpathで投稿を探す
-                    const result = iframeDoc.evaluate(`//a[contains(text(), '${postNumber}') and contains(@class, 'submit')]`, iframeDoc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
-                    let target = result.singleNodeValue;
-                    
-                    if (!target) {
-                        const r2 = iframeDoc.evaluate(`//*[text()='${postNumber}']`, iframeDoc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
-                        target = r2.singleNodeValue;
-                    }
-                    
+                    const doc = iframe.contentDocument || iframe.contentWindow.document;
+                    const res = doc.evaluate(`//a[contains(text(), '${postNumber}') and contains(@class, 'submit')]`, doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+                    let target = res.singleNodeValue || doc.evaluate(`//*[text()='${postNumber}']`, doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
                     if (target) {
-                        // ツールの力で強制スクロール
-                        const focusElem = target.closest('li') || target.parentElement || target;
-                        focusElem.style.border = '4px solid #ff4757';
-                        focusElem.style.backgroundColor = 'rgba(255, 71, 87, 0.1)';
-                        focusElem.scrollIntoView({ behavior: 'auto', block: 'center' });
+                        const focus = target.closest('li') || target.parentElement || target;
+                        focus.style.border = '4px solid #ff4757';
+                        focus.style.backgroundColor = 'rgba(255, 71, 87, 0.1)';
+                        focus.scrollIntoView({ behavior: 'auto', block: 'center' });
                     }
-                } catch(e) {
-                    console.log('Iframe access error:', e);
-                }
+                } catch(e) {}
             };
-            // iframeにプロキシURLとして流し込む
-            iframe.src = PROXY_BASE + encodeURIComponent(foundUrl);
+            iframe.src = PROXY_BASE + encodeURIComponent(found);
         } else {
-            loading.style.display = 'none';
-            alert(`${postNumber} が見つかりませんでした。削除された可能性があります。`);
-            modal.classList.add('hidden');
+            alert("見つかりませんでした。"); modal.classList.add('hidden');
         }
     } catch (e) {
-        loading.style.display = 'none';
-        alert(`エラーが発生しました: ${e.message}`);
-        modal.classList.add('hidden');
-    }
+        alert(e.message); modal.classList.add('hidden');
+    } finally { loading.style.display = 'none'; }
 }
