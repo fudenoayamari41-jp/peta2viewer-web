@@ -119,6 +119,19 @@
         </div>
     </div>
 
+    <!-- スレッド入室鍵（パスワード）用オーバーレイ -->
+    <div id="thread-auth-overlay" class="auth-overlay" style="display: none;">
+        <div class="auth-container">
+            <h3>🔑 スレッド入室鍵（パスワード）</h3>
+            <p>このスレッドは閲覧にパスワードが必要です。</p>
+            <input type="text" id="thread-key-input" placeholder="入室鍵を入力">
+            <div class="auth-buttons">
+                <button id="thread-auth-submit" class="primary-btn">入室</button>
+                <button id="thread-auth-cancel" class="secondary-btn">キャンセル</button>
+            </div>
+        </div>
+    </div>
+
     <!-- 認証用オーバーレイ (初期表示は非表示、JSで制御) -->
     <div id="auth-overlay" class="hidden">
         <div class="auth-box">
