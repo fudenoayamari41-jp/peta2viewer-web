@@ -107,9 +107,8 @@ export default async function handler(req, res) {
                 htmlText = baseTag + '\n' + htmlText;
             }
 
-            res.setHeader('Content-Type', 'text/html; charset=Shift_JIS');
-            // 加工済みのhtmlTextをShift_JIS相当のBufferに戻して送信
-            // (Vercelの仕様により、文字列送信時は自動でUTF-8になる場合があるため注意が必要ですが、まずはテキストで返します)
+            res.setHeader('Content-Type', 'text/html; charset=utf-8');
+            // 文字列として送信する場合、Vercel(Express)は自動的にUTF-8としてエンコードします
             return res.status(upstream.status).send(htmlText);
         }
 

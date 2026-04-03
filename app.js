@@ -626,8 +626,11 @@ async function fetchThreads() {
 
     try {
         const response = await authedFetch(PROXY_BASE + encodeURIComponent(SITE_URL));
+        const contentType = response.headers.get('content-type') || '';
+        const charset = contentType.toLowerCase().includes('utf-8') ? 'utf-8' : 'shift-jis';
+        
         const buffer = await response.arrayBuffer();
-        const decoder = new TextDecoder('shift-jis');
+        const decoder = new TextDecoder(charset);
         const doc = new DOMParser().parseFromString(decoder.decode(buffer), 'text/html');
         
         const listItems = doc.querySelectorAll('.thread-list .list-group-item, #owl-carousel .list-group-item');
@@ -754,8 +757,11 @@ async function loadNextPage(isFirstPage = false) {
     
     try {
         const response = await authedFetch(PROXY_BASE + encodeURIComponent(cache.nextUrlToFetch));
+        const contentType = response.headers.get('content-type') || '';
+        const charset = contentType.toLowerCase().includes('utf-8') ? 'utf-8' : 'shift-jis';
+
         const buffer = await response.arrayBuffer();
-        const decoder = new TextDecoder('shift-jis');
+        const decoder = new TextDecoder(charset);
         const html = decoder.decode(buffer);
         const doc = new DOMParser().parseFromString(html, 'text/html');
         
@@ -854,8 +860,11 @@ async function checkForNewImages(url, cache, isBackground = false) {
     try {
         while (isChecking && currentUrl) {
             const response = await authedFetch(PROXY_BASE + encodeURIComponent(currentUrl));
+            const contentType = response.headers.get('content-type') || '';
+            const charset = contentType.toLowerCase().includes('utf-8') ? 'utf-8' : 'shift-jis';
+
             const buffer = await response.arrayBuffer();
-            const decoder = new TextDecoder('shift-jis');
+            const decoder = new TextDecoder(charset);
             const doc = new DOMParser().parseFromString(decoder.decode(buffer), 'text/html');
             const imgs = doc.querySelectorAll('a[href*="comment_img.php"] img, .picture, img[src*="/upload/"]');
             
