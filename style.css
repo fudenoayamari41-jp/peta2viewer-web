@@ -520,7 +520,7 @@ body {
 }
 
 /* Lightbox Overlay */
-#lightbox.auth-overlay {
+.auth-overlay {
     position: fixed;
     top: 0;
     left: 0;
