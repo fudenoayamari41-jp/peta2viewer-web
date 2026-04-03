@@ -1,0 +1,14 @@
+{
+  "name": "peta2viewer-web",
+  "version": "1.0.0",
+  "private": true,
+  "description": "peta2掲示板 画像ビューワー（Vercel版）",
+  "type": "module",
+  "scripts": {
+    "dev": "vercel dev",
+    "deploy": "vercel --prod"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

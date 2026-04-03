@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Peta2 Image Viewer</title>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app-container">
+        <!-- サイドバー -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <h1>Peta2 Viewer</h1>
+                <div class="header-btns">
+                    <button id="config-btn" title="設定">⚙️</button>
+                    <button id="patrol-favs-btn" title="お気に入りの新着を確認">🔄巡回</button>
+                    <button id="reload-threads-btn" title="スレッド一覧を更新">⟳</button>
+                </div>
+            </div>
+
+            <!-- 設定パネル -->
+            <div id="settings-panel" class="hidden">
+                <label>対象の掲示板URL:</label>
+                <div class="settings-inputs">
+                    <input type="text" id="target-site-url" value="https://11210.peta2.jp/">
+                    <button id="save-site-url">適用</button>
+                </div>
+                <div id="url-history-container" class="hidden">
+                    <div style="font-size: 0.75rem; color: #888; margin-bottom: 4px;">履歴 (クリックで呼び出し):</div>
+                    <div id="url-history-chips"></div>
+                </div>
+            </div>
+            
+            <!-- スクラップ（お気に入り）ボタン -->
+            <div class="scrap-menu" id="open-scrap-btn">
+                <span>💖 スクラップブックを開く</span>
+            </div>
+
+            <!-- スレッドのソート機能 -->
+            <div class="sidebar-sort">
+                <select id="thread-sort-select">
+                    <option value="default">並び替え：新着（日時）順</option>
+                    <option value="fav">並び替え：お気に入りスレッド優先</option>
+                    <option value="read">並び替え：読込済みスレッド優先</option>
+                    <option value="hearts">並び替え：ハートの数が多い順</option>
+                </select>
+            </div>
+
+            <div class="thread-list-container">
+                <ul id="thread-list">
+                    <li class="loading-text">スレッドを取得中...</li>
+                </ul>
+            </div>
+        </aside>
+
+        <!-- メインエリア -->
+        <main class="main-content">
+            <header class="main-header">
+                <div class="header-top">
+                    <h2 id="current-thread-title">スレッドを選択してください</h2>
+                    <button id="thread-fav-btn" class="thread-fav-btn hidden" title="お気に入りスレッドに登録">☆</button>
+                    <span id="total-pages-info" class="page-info"></span>
+                </div>
+                <div class="header-actions">
+                    <select id="grid-columns-select" title="サムネイルの列数">
+                        <option value="auto">列数：自動</option>
+                        <option value="1">1列</option>
+                        <option value="2">2列</option>
+                        <option value="3">3列</option>
+                        <option value="4">4列</option>
+                        <option value="5">5列</option>
+                        <option value="6">6列</option>
+                        <option value="7">7列</option>
+                        <option value="8">8列</option>
+                    </select>
+                    <button id="auto-fetch-all-btn" class="hidden">全ページ自動取得</button>
+                    <div id="loading-indicator" class="hidden">
+                        <div class="spinner"></div>
+                        <span id="loading-status">画像を検索中...</span>
+                    </div>
+                </div>
+            </header>
+            
+            <div class="gallery-container" id="gallery-container">
+                <div class="empty-state">
+                    <p>左側のリストからスレッドを選択すると画像が表示されます。</p>
+                </div>
+            </div>
+        </main>
+    </div>
+    
+    <!-- ライトボックス (全画面画像ビューワー) -->
+    <div id="lightbox-overlay" class="hidden">
+        <div id="lightbox-toolbar">
+            <span id="lightbox-counter"></span>
+            <button id="lightbox-fav-btn" title="スクラップに登録/解除">♡</button>
+            <a id="lightbox-open-thread" class="hidden" target="_blank">📄 元スレッドを開く</a>
+            <a id="lightbox-open-original" class="hidden" target="_blank">🔍 元画像を開く</a>
+            <div id="lightbox-close">×</div>
+        </div>
+        <div id="lightbox-nav-left" title="新着側へ">‹</div>
+        <img id="lightbox-img" src="" alt="Enlarged Image">
+        <div id="lightbox-nav-right" title="過去側へ">›</div>
+    </div>
+    <!-- 内蔵スレッド(コンテキスト)ビューアー -->
+    <div id="context-modal" class="hidden">
+        <div id="context-modal-content">
+            <div id="context-modal-header">
+                <span id="context-modal-title">前後の流れ</span>
+                <button id="close-context-modal">×</button>
+            </div>
+            <div id="context-loading">
+                <div class="spinner"></div>
+                <span id="context-loading-text">対象ページを探索中...</span>
+            </div>
+            <iframe id="context-iframe" src="about:blank"></iframe>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
