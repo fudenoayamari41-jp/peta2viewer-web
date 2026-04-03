@@ -84,25 +84,32 @@ async function authedFetch(url, options = {}) {
 function isThreadLocked(html, resUrl = '') {
     if (!html) return false;
     
-    // 1. URLによるリダイレクト検知 (スレッドを開いたはずなのに、トップページに飛ばされている場合)
+    // 1. URLによる判定 (thread_key.php に飛ばされたら確実にロックされている)
+    if (resUrl && resUrl.includes('thread_key.php')) {
+        console.log('[LockCheck] Redirected to thread_key.php detected:', resUrl);
+        return true;
+    }
+
+    // 2. リダイレクト先がトップページ等の場合も念のためチェック
     if (resUrl) {
-        const urlObj = new URL(resUrl);
-        // パスが index.php や / で終わっている場合、かつ元々スレッドを開こうとしていたならトップへ戻されている
-        const isTopPage = urlObj.pathname.endsWith('index.php') || urlObj.pathname.endsWith('/') || !urlObj.searchParams.has('id');
-        if (isTopPage && (html.includes('getThreadList') || html.includes('thread-list'))) {
-            console.log('[LockCheck] Redirected to Top Page detected:', resUrl);
-            return true;
+        try {
+            const urlObj = new URL(resUrl);
+            const isTopPage = urlObj.pathname.endsWith('index.php') || urlObj.pathname.endsWith('/') || (!urlObj.searchParams.has('id') && !urlObj.searchParams.has('t'));
+            if (isTopPage && (html.includes('getThreadList') || html.includes('thread-list'))) {
+                console.log('[LockCheck] Redirected to Top Page detected:', resUrl);
+                return true;
+            }
+        } catch (e) {
+            console.warn('[LockCheck] URL parse error:', e);
         }
     }
 
-    // 2. HTMLの内容による判定 (既存ロジック)
-    // name="thread_key" が存在するか、あるいは「入室鍵」という文字列が含まれているか
+    // 3. HTMLの内容による判定
     const hasThreadKeyInput = /name\s*=\s*["']?thread_key["']?/i.test(html);
     const hasNyuushitsukagiText = html.includes('入室鍵') || html.includes('パスワード');
     const result = hasThreadKeyInput || hasNyuushitsukagiText;
     
-    // デバッグログ
-    console.log('[LockCheck] hasThreadKeyInput:', hasThreadKeyInput, '/ hasNyuushitsukagiText:', hasNyuushitsukagiText, '=> locked:', result);
+    console.log('[LockCheck] Final result:', result, '(KeyInput:', hasThreadKeyInput, 'Text:', hasNyuushitsukagiText, ')');
     return result;
 }
 
