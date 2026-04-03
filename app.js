@@ -90,7 +90,10 @@ function isThreadLocked(html, resUrl = '') {
         return true;
     }
 
-    // 2. リダイレクト先がトップページ等の場合も念のためチェック
+    // 2. HTMLの内容による判定 (input[name="thread_key"] が実在する場合のみ)
+    const hasThreadKeyInput = /name\s*=\s*["']?thread_key["']?/i.test(html);
+    
+    // リダイレクト先がトップページ等の場合も念のためチェック (既存のトップ戻り検知)
     if (resUrl) {
         try {
             const urlObj = new URL(resUrl);
@@ -99,17 +102,11 @@ function isThreadLocked(html, resUrl = '') {
                 console.log('[LockCheck] Redirected to Top Page detected:', resUrl);
                 return true;
             }
-        } catch (e) {
-            console.warn('[LockCheck] URL parse error:', e);
-        }
+        } catch (e) {}
     }
 
-    // 3. HTMLの内容による判定
-    const hasThreadKeyInput = /name\s*=\s*["']?thread_key["']?/i.test(html);
-    const hasNyuushitsukagiText = html.includes('入室鍵') || html.includes('パスワード');
-    const result = hasThreadKeyInput || hasNyuushitsukagiText;
-    
-    console.log('[LockCheck] Final result:', result, '(KeyInput:', hasThreadKeyInput, 'Text:', hasNyuushitsukagiText, ')');
+    const result = hasThreadKeyInput;
+    console.log('[LockCheck] Final result:', result, '(KeyInput:', hasThreadKeyInput, ')');
     return result;
 }
 
@@ -517,33 +514,45 @@ function updateSidebarThreadStats(url) {
     const li = document.querySelector(`.thread-item[data-url="${url}"]`);
     if (!li) return;
     
+    // 常に最新の状態を反映
+    const isFav = favThreads.includes(url);
+    const isLocked = lockedThreads.has(url);
     const cacheData = threadCache.get(url);
+
+    // お気に入りマーク（★）の制御：以前の状態を尊重
+    let starMark = li.querySelector('.thread-fav-star');
+    if (isFav) {
+        if (!starMark) {
+            starMark = document.createElement('span');
+            starMark.className = 'thread-fav-star';
+            li.appendChild(starMark);
+        }
+        let badge = '';
+        if (cacheData) {
+            const newCount = cacheData.images.filter(i => i.isNew).length;
+            if (newCount > 0) badge = `<span class="new-count-badge">新着${newCount}</span>`;
+        }
+        starMark.innerHTML = `${badge}★`;
+    } else if (starMark) {
+        starMark.remove();
+    }
+
+    // 鍵マーク（🔒）の制御：最前面に挿入
+    let lockMark = li.querySelector('.lock-icon');
+    if (isLocked) {
+        if (!lockMark) {
+            lockMark = document.createElement('span');
+            lockMark.className = 'lock-icon';
+            lockMark.textContent = '🔒';
+            li.prepend(lockMark);
+        }
+    } else if (lockMark) {
+        lockMark.remove();
+    }
+
     if (cacheData) {
         li.classList.add('read');
         const scrapCount = scraps.filter(s => s.threadUrl === url).length;
-        
-        if (favThreads.includes(url)) {
-            let starMarkSpan = li.querySelector('.thread-fav-star');
-            if (starMarkSpan) {
-                const newCount = cacheData.images.filter(i => i.isNew).length;
-                let badgeHtml = '';
-                if (newCount > 0) badgeHtml = `<span class="new-count-badge">新着${newCount}</span>`;
-                starMarkSpan.innerHTML = `${badgeHtml}★`;
-            }
-        }
-
-        // 鍵マークの表示更新
-        let lockMark = li.querySelector('.lock-icon');
-        if (lockedThreads.has(url)) {
-            if (!lockMark) {
-                lockMark = document.createElement('span');
-                lockMark.className = 'lock-icon';
-                lockMark.textContent = '🔒';
-                li.prepend(lockMark);
-            }
-        } else if (lockMark) {
-            lockMark.remove();
-        }
         
         let statsDiv = li.querySelector('.thread-stats');
         if (!statsDiv) {
@@ -724,16 +733,7 @@ function renderThreadList() {
         li.className = 'thread-item';
         li.setAttribute('data-url', data.url);
         
-        let starMark = '';
-        if (favThreads.includes(data.url)) {
-            const cache = threadCache.get(data.url);
-            let badge = '';
-            if (cache && cache.images.filter(i=>i.isNew).length > 0) {
-                badge = `<span class="new-count-badge">新着${cache.images.filter(i=>i.isNew).length}</span>`;
-            }
-            starMark = `<span class="thread-fav-star">${badge}★</span>`;
-        }
-        li.innerHTML = `${starMark}<div class="thread-title">${escapeHTML(data.title)} (${data.postCount || '?'})</div><div class="thread-meta">${escapeHTML(data.meta)}</div>`;
+        li.innerHTML = `<div class="thread-title">${escapeHTML(data.title)} (${data.postCount || '?'})</div><div class="thread-meta">${escapeHTML(data.meta)}</div>`;
         if (data.url === activeThreadUrl) li.classList.add('active');
         
         li.onclick = () => {
@@ -809,12 +809,17 @@ async function loadNextPage(isFirstPage = false) {
         const resUrl = response.headers.get('x-res-url') || '';
         const doc = new DOMParser().parseFromString(html, 'text/html');
         
-        // 入室鍵が必要かチェック (最終URLによるリダイレクト検知を含む)
-        const tId = new URL(cache.nextUrlToFetch).searchParams.get('t');
+        // 入室鍵が必要かチェック (リダイレクト先からのID取得を強化)
+        let tId = new URL(cache.nextUrlToFetch).searchParams.get('t');
+        if (!tId && resUrl) {
+            try { tId = new URL(resUrl).searchParams.get('t'); } catch(e) {}
+        }
+        
         const locked = isThreadLocked(html, resUrl);
         updateThreadLockState(activeThreadUrl, locked);
 
         if (locked) {
+            console.log('[LockCheck] Entry key required for tId:', tId);
             if (tId && !threadKeys.has(tId)) {
                 if (window.showThreadAuthOverlay) window.showThreadAuthOverlay(tId);
                 isExtracting = false;

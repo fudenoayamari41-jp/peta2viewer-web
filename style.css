@@ -169,6 +169,7 @@ body {
     border-bottom: 1px solid var(--border-color);
     cursor: pointer;
     transition: background-color 0.2s;
+    position: relative; /* アイコン配置の基準点 */
 }
 
 .thread-item:hover, .thread-item.active {
@@ -188,6 +189,7 @@ body {
     margin-bottom: 5px;
     line-height: 1.4;
     word-break: break-all;
+    padding-right: 25px; /* ★と重ならないように余白を確保 */
 }
 
 .thread-post-count {
@@ -237,7 +239,7 @@ body {
 }
 
 .main-header {
-    padding: 20px 30px;
+    padding: 15px 25px; /* 少しスリムに */
     border-bottom: 1px solid var(--border-color);
     background-color: var(--sidebar-bg);
     display: flex;
@@ -247,39 +249,40 @@ body {
 
 .header-top {
     display: flex;
-    align-items: baseline;
+    align-items: center;
     gap: 15px;
 }
 
 #current-thread-title {
-    font-size: 1.2rem;
+    font-size: 1.1rem;
     font-weight: 600;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    max-width: 50vw;
+    max-width: 40vw;
 }
 
 .page-info {
-    font-size: 0.9rem;
+    font-size: 0.85rem;
     color: var(--accent-color);
-    font-weight: bold;
+    font-weight: normal;
 }
 
-/* スレッドお気に入りボタン（右カラムタイトル横） */
+/* スレッドお気に入りボタン（以前のデザインに準拠） */
 .thread-fav-btn {
     background: none;
     border: none;
-    font-size: 1.5rem;
+    font-size: 1.2rem;
     cursor: pointer;
-    color: rgba(255,255,255,0.3);
-    transition: color 0.2s, transform 0.15s;
-    padding: 0;
+    color: rgba(255,255,255,0.2);
+    transition: all 0.2s;
+    padding: 2px 5px;
     line-height: 1;
-    flex-shrink: 0;
+    border-radius: 4px;
 }
 .thread-fav-btn:hover {
-    color: rgba(255,255,255,0.7);
+    color: rgba(255,255,255,0.5);
+    background: rgba(255,255,255,0.05);
 }
 .thread-fav-btn.active {
     color: #ffd700;
@@ -287,18 +290,18 @@ body {
 .thread-fav-btn.active:hover {
     color: #ffe44d;
 }
-.thread-fav-btn.hidden {
-    display: none;
-}
 
 /* サイドバーのスレッドお気に入りマーク */
 .thread-fav-star {
     position: absolute;
-    top: 4px;
-    right: 6px;
+    top: 10px;
+    right: 12px;
     color: #ffd700;
-    font-size: 0.9rem;
+    font-size: 0.95rem;
     pointer-events: none;
+    display: flex;
+    align-items: center;
+    gap: 4px;
 }
 
 .new-count-badge {
