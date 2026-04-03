@@ -87,7 +87,17 @@ function isThreadLocked(html) {
     // 大文字小文字を区別せず、クォートの有無も考慮した正規表現でチェック
     const hasThreadKeyInput = /name\s*=\s*["']?thread_key["']?/i.test(html);
     const hasNyuushitsukagiText = html.includes('入室鍵') || html.includes('パスワード');
-    return hasThreadKeyInput || hasNyuushitsukagiText;
+    const result = hasThreadKeyInput || hasNyuushitsukagiText;
+    // デバッグログ（問題解決後に削除予定）
+    console.log('[LockCheck] hasThreadKeyInput:', hasThreadKeyInput, '/ hasNyuushitsukagiText:', hasNyuushitsukagiText, '=> locked:', result);
+    if (!result) {
+        // 届いたHTMLの先頭500文字を出力して、実際の内容を確認する
+        console.log('[LockCheck] HTML先頭500文字:', html.substring(0, 500));
+        // 鍵フォームの可能性のある文字列を検索
+        const idx = html.indexOf('thread');
+        if (idx !== -1) console.log('[LockCheck] "thread"周辺のHTML:', html.substring(Math.max(0, idx-50), idx+200));
+    }
+    return result;
 }
 
 function updateThreadLockState(url, isLocked) {
@@ -166,6 +176,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let pendingThreadId = null;
 
     const showThreadAuthOverlay = (tId) => {
+        console.log('[UI] showThreadAuthOverlay called for tId:', tId);
         pendingThreadId = tId;
         threadKeyInput.value = '';
         threadAuthOverlay.style.display = 'flex';
