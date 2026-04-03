@@ -110,6 +110,20 @@ function isThreadLocked(html, resUrl = '') {
     return hasThreadKeyInput;
 }
 
+// 共通：URLやHTMLからtId（スレッドID）を確実に特定する
+function getThreadId(requestUrl, resUrl, doc) {
+    let tId = null;
+    try { tId = new URL(requestUrl).searchParams.get('t'); } catch(e) {}
+    if (!tId && resUrl) {
+        try { tId = new URL(resUrl).searchParams.get('t'); } catch(e) {}
+    }
+    if (!tId && doc) {
+        const tInput = doc.querySelector('input[name="t"]');
+        if (tInput) tId = tInput.value;
+    }
+    return tId;
+}
+
 function updateThreadLockState(url, isLocked) {
     if (isLocked) {
         lockedThreads.add(url);
@@ -820,14 +834,8 @@ async function loadNextPage(isFirstPage = false) {
         const resUrl = response.headers.get('x-res-url') || '';
         const doc = new DOMParser().parseFromString(html, 'text/html');
         
-        let tId = new URL(cache.nextUrlToFetch).searchParams.get('t');
-        if (!tId && resUrl) {
-            try { tId = new URL(resUrl).searchParams.get('t'); } catch(e) {}
-        }
-        if (!tId) {
-            const tInput = doc.querySelector('input[name="t"]');
-            if (tInput) tId = tInput.value;
-        }
+        // 共通関数でID取得を確実に
+        const tId = getThreadId(cache.nextUrlToFetch, resUrl, doc);
 
         const locked = isThreadLocked(html, resUrl);
         console.log(`[LockCheck] URL: ${cache.nextUrlToFetch} | resUrl: ${resUrl} | locked: ${locked} | tId: ${tId}`);
@@ -926,24 +934,22 @@ async function checkForNewImages(url, cache, isBackground = false) {
             const html = decoder.decode(buffer);
             const resUrl = response.headers.get('x-res-url') || '';
 
-            // ロック判定 (最終URLによるリダイレクト検知を含む)
+            const doc = new DOMParser().parseFromString(html, 'text/html');
+
+            // ロック判定 (リダイレクト検知を含む)
             const locked = isThreadLocked(html, resUrl);
             updateThreadLockState(url, locked);
+            
             if (locked) {
                 if (url === activeThreadUrl) {
-                    const tId = new URL(currentUrl).searchParams.get('t');
-                    if (tId && !threadKeys.has(tId)) {
-                        if (window.showThreadAuthOverlay) window.showThreadAuthOverlay(tId);
-                        isChecking = false;
-                        if (!isBackground) document.getElementById('loading-indicator').classList.add('hidden');
-                        return;
+                    const tId = getThreadId(currentUrl, resUrl, doc);
+                    if (window.showThreadAuthOverlay) {
+                        window.showThreadAuthOverlay(tId || 'UNKNOWN');
                     }
                 }
                 isChecking = false;
                 break;
             }
-
-            const doc = new DOMParser().parseFromString(html, 'text/html');
             const imgs = doc.querySelectorAll('a[href*="comment_img.php"] img, .picture, img[src*="/upload/"]');
             
             for (let i = 0; i < imgs.length; i++) {
