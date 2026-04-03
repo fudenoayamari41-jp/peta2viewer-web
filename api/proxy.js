@@ -85,8 +85,17 @@ export default async function handler(req, res) {
             headers: upstreamHeaders,
         });
 
+        // デバッグ用: リダイレクトが発生しているかログ出力
+        if (upstream.url !== targetUrl) {
+            console.log(`[proxy-api] Redirect detected: ${targetUrl} -> ${upstream.url}`);
+        }
+
         res.setHeader('Access-Control-Allow-Origin', '*');
         res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+        // クライアント側に最終的な到達URLを知らせる
+        res.setHeader('x-res-url', upstream.url);
+        // クライアント側でJSから読み取れるように公開する
+        res.setHeader('Access-Control-Expose-Headers', 'x-res-url');
 
         const contentType = upstream.headers.get('content-type') || 'application/octet-stream';
         res.setHeader('Content-Type', contentType);

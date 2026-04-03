@@ -81,22 +81,28 @@ async function authedFetch(url, options = {}) {
 }
 
 // --- スレッドロック判定用ヘルパー ---
-function isThreadLocked(html) {
+function isThreadLocked(html, resUrl = '') {
     if (!html) return false;
+    
+    // 1. URLによるリダイレクト検知 (スレッドを開いたはずなのに、トップページに飛ばされている場合)
+    if (resUrl) {
+        const urlObj = new URL(resUrl);
+        // パスが index.php や / で終わっている場合、かつ元々スレッドを開こうとしていたならトップへ戻されている
+        const isTopPage = urlObj.pathname.endsWith('index.php') || urlObj.pathname.endsWith('/') || !urlObj.searchParams.has('id');
+        if (isTopPage && (html.includes('getThreadList') || html.includes('thread-list'))) {
+            console.log('[LockCheck] Redirected to Top Page detected:', resUrl);
+            return true;
+        }
+    }
+
+    // 2. HTMLの内容による判定 (既存ロジック)
     // name="thread_key" が存在するか、あるいは「入室鍵」という文字列が含まれているか
-    // 大文字小文字を区別せず、クォートの有無も考慮した正規表現でチェック
     const hasThreadKeyInput = /name\s*=\s*["']?thread_key["']?/i.test(html);
     const hasNyuushitsukagiText = html.includes('入室鍵') || html.includes('パスワード');
     const result = hasThreadKeyInput || hasNyuushitsukagiText;
-    // デバッグログ（問題解決後に削除予定）
+    
+    // デバッグログ
     console.log('[LockCheck] hasThreadKeyInput:', hasThreadKeyInput, '/ hasNyuushitsukagiText:', hasNyuushitsukagiText, '=> locked:', result);
-    if (!result) {
-        // 届いたHTMLの先頭500文字を出力して、実際の内容を確認する
-        console.log('[LockCheck] HTML先頭500文字:', html.substring(0, 500));
-        // 鍵フォームの可能性のある文字列を検索
-        const idx = html.indexOf('thread');
-        if (idx !== -1) console.log('[LockCheck] "thread"周辺のHTML:', html.substring(Math.max(0, idx-50), idx+200));
-    }
     return result;
 }
 
@@ -793,11 +799,12 @@ async function loadNextPage(isFirstPage = false) {
         const buffer = await response.arrayBuffer();
         const decoder = new TextDecoder(charset);
         const html = decoder.decode(buffer);
+        const resUrl = response.headers.get('x-res-url') || '';
         const doc = new DOMParser().parseFromString(html, 'text/html');
         
-        // 入室鍵が必要かチェック
+        // 入室鍵が必要かチェック (最終URLによるリダイレクト検知を含む)
         const tId = new URL(cache.nextUrlToFetch).searchParams.get('t');
-        const locked = isThreadLocked(html);
+        const locked = isThreadLocked(html, resUrl);
         updateThreadLockState(activeThreadUrl, locked);
 
         if (locked) {
@@ -891,9 +898,10 @@ async function checkForNewImages(url, cache, isBackground = false) {
             const buffer = await response.arrayBuffer();
             const decoder = new TextDecoder(charset);
             const html = decoder.decode(buffer);
+            const resUrl = response.headers.get('x-res-url') || '';
 
-            // ロック判定
-            const locked = isThreadLocked(html);
+            // ロック判定 (最終URLによるリダイレクト検知を含む)
+            const locked = isThreadLocked(html, resUrl);
             updateThreadLockState(url, locked);
             if (locked) {
                 if (url === activeThreadUrl) {
