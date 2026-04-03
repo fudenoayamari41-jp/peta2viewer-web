@@ -18,7 +18,19 @@ let activeThreadUrl = null;
 // --- 認証管理用の状態 ---
 let ACCESS_KEY = localStorage.getItem('PETA2_ACCESS_KEY') || '';
 const threadKeys = new Map();     // スレッドごとのパスワード (threadId -> key)
-const lockedThreads = new Set();  // ロックされているスレッドURLのセット
+
+// ロックされているスレッドURLのセット（localStorageから復元）
+let savedLocked = [];
+try {
+    savedLocked = JSON.parse(localStorage.getItem('peta2_locked_threads') || '[]');
+} catch (e) {}
+const lockedThreads = new Set(savedLocked);
+
+function saveLockedThreads() {
+    try {
+        localStorage.setItem('peta2_locked_threads', JSON.stringify(Array.from(lockedThreads)));
+    } catch (e) {}
+}
 
 // ソート用の状態管理
 let currentSortMode = 'default';
@@ -104,6 +116,7 @@ function updateThreadLockState(url, isLocked) {
     } else {
         lockedThreads.delete(url);
     }
+    saveLockedThreads(); // 状態が変わるたびに保存
     updateSidebarThreadStats(url);
 }
 
@@ -757,6 +770,16 @@ function initThread(url, title) {
     if (threadCache.has(url)) {
         const cache = threadCache.get(url);
         document.getElementById('total-pages-info').textContent = cache.totalPages > 1 ? `(全 ${cache.totalPages} ページ)` : '';
+        
+        // ロック中のスレッドを再表示する場合
+        if (lockedThreads.has(url)) {
+            const tId = new URL(url).searchParams.get('t');
+            if (tId && !threadKeys.has(tId)) {
+                gallery.innerHTML = '<div style="padding:40px; text-align:center; color:#ff4757; font-size:1.2rem;">🔒 このスレッドの閲覧には「入室鍵」が必要です。</div>';
+                if (window.showThreadAuthOverlay) window.showThreadAuthOverlay(tId);
+            }
+        }
+
         cache.images.forEach(imgData => {
             renderImageCard(imgData, false);
             imgData.isNew = false;
@@ -883,8 +906,8 @@ async function patrolFavThreads() {
 }
 
 async function checkForNewImages(url, cache, isBackground = false) {
-    if (cache.images.length === 0) return; 
-    const topSrc = cache.images[0].src;
+    // 画像が0枚でも、ロックされている可能性や初回失敗の可能性があるためチェックを続行する
+    const topSrc = cache.images.length > 0 ? cache.images[0].src : null;
     let isChecking = true, currentUrl = url, newImgs = [];
     
     if (!isBackground) {
