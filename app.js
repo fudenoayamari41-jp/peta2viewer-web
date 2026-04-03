@@ -754,6 +754,7 @@ function renderThreadList() {
         li.onclick = () => {
             if (isExtracting || isAutoFetching) return;
             document.querySelectorAll('.thread-item').forEach(el => el.classList.remove('active'));
+            document.getElementById('open-scrap-btn').classList.remove('active');
             li.classList.add('active');
             initThread(data.url, data.title);
         };
