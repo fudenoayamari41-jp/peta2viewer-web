@@ -18,8 +18,11 @@ export default async function handler(req, res) {
     const adminPassword = req.headers['x-admin-password'];
     const MASTER_ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
 
-    // 管理者パスワード未設定、または不一致の場合
-    if (!MASTER_ADMIN_PASSWORD || adminPassword !== MASTER_ADMIN_PASSWORD) {
+    // 管理者パスワード未設定、または不一致の場合（空白は無視する）
+    const trimmedMasterPassword = MASTER_ADMIN_PASSWORD ? MASTER_ADMIN_PASSWORD.trim() : null;
+    const trimmedInputPassword = adminPassword ? adminPassword.trim() : null;
+
+    if (!trimmedMasterPassword || trimmedInputPassword !== trimmedMasterPassword) {
         return res.status(401).json({ error: 'Unauthorized: Invalid Admin Password' });
     }
 
