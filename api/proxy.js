@@ -138,6 +138,28 @@ export default async function handler(req, res) {
                 htmlText = baseTag + '\n' + htmlText;
             }
 
+            // Cookie同期用スクリプトの注入 (iframe内でのSet-Cookieを検知して親ウィンドウに通知)
+            if (upstreamSetCookie) {
+                const scriptInjection = `
+<script id="peta2-cookie-sync" data-cookie="${upstreamSetCookie.replace(/"/g, '&quot;')}">
+  (function() {
+    try {
+      const cookie = document.getElementById('peta2-cookie-sync').dataset.cookie;
+      if (cookie && window.parent !== window) {
+        window.parent.postMessage({ type: 'peta2_cookie_update', cookie: cookie }, '*');
+      }
+    } catch(e) { console.error('Cookie sync script error:', e); }
+  })();
+</script>`;
+                if (htmlText.includes('</head>')) {
+                    htmlText = htmlText.replace('</head>', `${scriptInjection}\n</head>`);
+                } else if (htmlText.includes('</HEAD>')) {
+                    htmlText = htmlText.replace('</HEAD>', `${scriptInjection}\n</HEAD>`);
+                } else {
+                    htmlText += scriptInjection;
+                }
+            }
+
             res.setHeader('Content-Type', 'text/html; charset=utf-8');
             // 文字列として送信する場合、Vercel(Express)は自動的にUTF-8としてエンコードします
             return res.status(upstream.status).send(htmlText);

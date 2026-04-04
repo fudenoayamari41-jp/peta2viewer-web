@@ -480,6 +480,20 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         updateLightboxFavBtn(imgData);
     });
+
+    // --- iframeからのクッキー同期メッセージを受信 ---
+    window.addEventListener('message', (event) => {
+        if (event.data && event.data.type === 'peta2_cookie_update') {
+            console.log('[App] Cookie update message received from iframe');
+            try {
+                // 現在のサイトドメインに対してクッキーを保存
+                const targetDomain = new URL(SITE_URL).hostname;
+                CookieManager.saveCookies(targetDomain, event.data.cookie);
+            } catch (e) {
+                console.error('[App] Failed to sync cookie:', e);
+            }
+        }
+    });
 });
 
 function openLightbox(index) {
@@ -844,7 +858,7 @@ function showGatekeeperUI(url) {
                 <p>以下の画面で「ENTER」や「同意する」を押してサイトに入ってください。<br>操作完了後、「入室完了」ボタンを押すとスレッド一覧を読み込みます。</p>
                 <button id="gatekeeper-done-btn" class="primary-btn">入室完了したので再読み込み</button>
             </div>
-            <iframe src="${PROXY_BASE + encodeURIComponent(url)}" class="gatekeeper-iframe"></iframe>
+            <iframe src="${PROXY_BASE + encodeURIComponent(url)}&access_key=${encodeURIComponent(ACCESS_KEY)}" class="gatekeeper-iframe"></iframe>
         </div>
     `;
     
