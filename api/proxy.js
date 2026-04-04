@@ -89,9 +89,110 @@ export default async function handler(req, res) {
     }
 
     try {
-        const upstream = await fetch(targetUrl, {
+        let upstream = await fetch(targetUrl, {
             headers: upstreamHeaders,
         });
+
+        let gateCookiesForClient = '';
+
+        // ---- 門限ページ（enter.php / agreement.php）のサーバーサイド自動突破 ----
+        if (upstream.url.includes('enter.php') || upstream.url.includes('agreement.php')) {
+            console.log('[proxy-api] Gate page detected at:', upstream.url);
+
+            try {
+                const gateBuffer = await upstream.arrayBuffer();
+                const gateHtml = new TextDecoder('shift-jis').decode(Buffer.from(gateBuffer));
+
+                // ゲートレスポンスのCookieを収集
+                let gateCookiePairs = [];
+                const gateSetCookie = upstream.headers.get('set-cookie');
+                if (gateSetCookie) {
+                    gateSetCookie.split(/,(?=\s*[a-zA-Z0-9_]+=)/).forEach(c => {
+                        gateCookiePairs.push(c.split(';')[0].trim());
+                    });
+                }
+
+                // フォームを解析して自動送信
+                const formMatch = gateHtml.match(/<form([^>]*)>([\s\S]*?)<\/form>/i);
+                if (formMatch) {
+                    const formAttrs = formMatch[1];
+                    const formContent = formMatch[2];
+
+                    const methodMatch = formAttrs.match(/method\s*=\s*["']?(\w+)["']?/i);
+                    const method = (methodMatch ? methodMatch[1] : 'GET').toUpperCase();
+
+                    const actionMatch = formAttrs.match(/action\s*=\s*["']([^"']*)["']/i);
+                    let formAction = upstream.url;
+                    if (actionMatch && actionMatch[1]) {
+                        formAction = new URL(actionMatch[1], upstream.url).href;
+                    }
+
+                    // input要素を収集
+                    const inputs = {};
+                    const inputRegex = /<input[^>]+>/gi;
+                    let inputEl;
+                    while ((inputEl = inputRegex.exec(formContent)) !== null) {
+                        const nameM = inputEl[0].match(/name\s*=\s*["']([^"']*)["']/i);
+                        const valM = inputEl[0].match(/value\s*=\s*["']([^"']*)["']/i);
+                        if (nameM) inputs[nameM[1]] = valM ? valM[1] : '';
+                    }
+
+                    console.log('[proxy-api] Auto-submitting gate form:', { method, action: formAction, fields: Object.keys(inputs) });
+
+                    const submitHeaders = { ...upstreamHeaders };
+                    const submitCookieStr = [...combinedCookies, ...gateCookiePairs].filter(Boolean).join('; ');
+                    if (submitCookieStr) submitHeaders['Cookie'] = submitCookieStr;
+
+                    let submitResponse;
+                    if (method === 'POST') {
+                        submitHeaders['Content-Type'] = 'application/x-www-form-urlencoded';
+                        submitResponse = await fetch(formAction, {
+                            method: 'POST',
+                            headers: submitHeaders,
+                            body: new URLSearchParams(inputs).toString(),
+                            redirect: 'manual',
+                        });
+                    } else {
+                        const getUrl = new URL(formAction);
+                        Object.entries(inputs).forEach(([k, v]) => getUrl.searchParams.set(k, v));
+                        submitResponse = await fetch(getUrl.href, {
+                            headers: submitHeaders,
+                            redirect: 'manual',
+                        });
+                    }
+
+                    // フォーム送信レスポンスからCookieを収集
+                    const submitSetCookie = submitResponse.headers.get('set-cookie');
+                    if (submitSetCookie) {
+                        submitSetCookie.split(/,(?=\s*[a-zA-Z0-9_]+=)/).forEach(c => {
+                            gateCookiePairs.push(c.split(';')[0].trim());
+                        });
+                    }
+                }
+
+                // 収集したCookieで元のURLを再取得
+                if (gateCookiePairs.length > 0) {
+                    const retryHeaders = { ...upstreamHeaders };
+                    const allCookies = [...combinedCookies, ...gateCookiePairs].filter(Boolean).join('; ');
+                    retryHeaders['Cookie'] = allCookies;
+
+                    console.log('[proxy-api] Re-fetching original URL with gate cookies...');
+                    const retry = await fetch(targetUrl, { headers: retryHeaders });
+
+                    if (!retry.url.includes('enter.php') && !retry.url.includes('agreement.php')) {
+                        console.log('[proxy-api] Gate auto-entry succeeded!');
+                        upstream = retry;
+                        gateCookiesForClient = gateCookiePairs.map(c => c + '; Path=/').join(', ');
+                    } else {
+                        console.log('[proxy-api] Gate auto-entry failed, showing gate page');
+                        upstream = retry;
+                    }
+                }
+            } catch (gateErr) {
+                console.error('[proxy-api] Gate auto-entry error:', gateErr);
+                try { upstream = await fetch(targetUrl, { headers: upstreamHeaders }); } catch(e2) {}
+            }
+        }
 
         // デバッグ用: リダイレクトが発生しているかログ出力
         if (upstream.url !== targetUrl) {
@@ -100,23 +201,20 @@ export default async function handler(req, res) {
 
         res.setHeader('Access-Control-Allow-Origin', '*');
         res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-        // クライアント側に最終的な到達URLを知らせる
         res.setHeader('x-res-url', upstream.url);
-        
-        // 上流からの Set-Cookie を透過・書き換え (ブラウザとJSの両方で管理可能にする)
+
+        // 上流 + 門限突破で得たCookieをクライアントへ転送
         const upstreamSetCookie = upstream.headers.get('set-cookie');
-        if (upstreamSetCookie) {
-            // プロキシのドメインで有効になるように属性を調整
-            // Domain属性を削除し、Pathをプロキシのベース（/api/）に合わせるなど
-            const cookies = upstreamSetCookie.split(/,(?=\s*[a-zA-Z0-9_]+=)/);
+        const mergedSetCookies = [upstreamSetCookie, gateCookiesForClient].filter(Boolean).join(', ');
+        if (mergedSetCookies) {
+            const cookies = mergedSetCookies.split(/,(?=\s*[a-zA-Z0-9_]+=)/);
             cookies.forEach(cookie => {
                 const cleaned = cookie.replace(/Domain=[^;]+;?\s*/i, '').replace(/Path=[^;]+;?\s*/i, 'Path=/;');
                 res.appendHeader('Set-Cookie', cleaned);
             });
-            res.setHeader('x-set-cookie', upstreamSetCookie);
+            res.setHeader('x-set-cookie', mergedSetCookies);
         }
 
-        // クライアント側でJSから読み取れるように公開する
         res.setHeader('Access-Control-Expose-Headers', 'x-res-url, x-set-cookie');
 
         const contentType = upstream.headers.get('content-type') || 'application/octet-stream';
@@ -138,17 +236,17 @@ export default async function handler(req, res) {
                 htmlText = baseTag + '\n' + htmlText;
             }
 
-            // Cookie同期用スクリプトの注入 (iframe内でのSet-Cookieを検知して親ウィンドウに通知)
-            if (upstreamSetCookie) {
+            // Cookie同期用スクリプトの注入
+            if (mergedSetCookies) {
                 const scriptInjection = `
-<script id="peta2-cookie-sync" data-cookie="${upstreamSetCookie.replace(/"/g, '&quot;')}">
+<script id="peta2-cookie-sync" data-cookie="${mergedSetCookies.replace(/"/g, '&quot;')}">
   (function() {
     try {
       const cookie = document.getElementById('peta2-cookie-sync').dataset.cookie;
       if (cookie && window.parent !== window) {
         window.parent.postMessage({ type: 'peta2_cookie_update', cookie: cookie }, '*');
       }
-    } catch(e) { console.error('Cookie sync script error:', e); }
+    } catch(e) {}
   })();
 </script>`;
                 if (htmlText.includes('</head>')) {
@@ -161,7 +259,6 @@ export default async function handler(req, res) {
             }
 
             res.setHeader('Content-Type', 'text/html; charset=utf-8');
-            // 文字列として送信する場合、Vercel(Express)は自動的にUTF-8としてエンコードします
             return res.status(upstream.status).send(htmlText);
         }
 
