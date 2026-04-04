@@ -71,7 +71,7 @@ export default async function handler(req, res) {
 
     // Peta2 入室鍵（スレッドパスワード）およびクライアントからのCookieを追加
     const peta2ItemKey = req.headers['x-peta2-item-key'];
-    const clientCookies = req.headers['cookie'] || '';
+    const clientCookies = req.headers['x-peta2-cookies'] || '';
     
     let combinedCookies = [];
     if (clientCookies) combinedCookies.push(clientCookies);

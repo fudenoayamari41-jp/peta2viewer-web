@@ -119,7 +119,7 @@ async function authedFetch(url, options = {}) {
             const targetDomain = new URL(proxyTarget).hostname;
             const savedCookies = CookieManager.getCookies(targetDomain);
             if (savedCookies) {
-                options.headers['Cookie'] = savedCookies;
+                options.headers['X-Peta2-Cookies'] = savedCookies;
             }
 
             // スレIDを特定して、保存された鍵があればヘッダーに追加
