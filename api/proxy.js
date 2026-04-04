@@ -69,15 +69,23 @@ export default async function handler(req, res) {
         'Referer': parsedUrl.origin + '/',
     };
 
-    // Peta2 入室鍵（スレッドパスワード）をCookieとして追加
+    // Peta2 入室鍵（スレッドパスワード）およびクライアントからのCookieを追加
     const peta2ItemKey = req.headers['x-peta2-item-key'];
+    const clientCookies = req.headers['cookie'] || '';
+    
+    let combinedCookies = [];
+    if (clientCookies) combinedCookies.push(clientCookies);
+    
     if (peta2ItemKey) {
         let threadId = parsedUrl.searchParams.get('t') || '';
-        const newCookies = [`thread_key=${peta2ItemKey}`];
+        combinedCookies.push(`thread_key=${peta2ItemKey}`);
         if (threadId) {
-            newCookies.push(`thread_key_${threadId}=${peta2ItemKey}`);
+            combinedCookies.push(`thread_key_${threadId}=${peta2ItemKey}`);
         }
-        upstreamHeaders['Cookie'] = newCookies.join('; ');
+    }
+    
+    if (combinedCookies.length > 0) {
+        upstreamHeaders['Cookie'] = combinedCookies.join('; ');
     }
 
     try {
@@ -94,8 +102,22 @@ export default async function handler(req, res) {
         res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
         // クライアント側に最終的な到達URLを知らせる
         res.setHeader('x-res-url', upstream.url);
+        
+        // 上流からの Set-Cookie を透過・書き換え (ブラウザとJSの両方で管理可能にする)
+        const upstreamSetCookie = upstream.headers.get('set-cookie');
+        if (upstreamSetCookie) {
+            // プロキシのドメインで有効になるように属性を調整
+            // Domain属性を削除し、Pathをプロキシのベース（/api/）に合わせるなど
+            const cookies = upstreamSetCookie.split(/,(?=\s*[a-zA-Z0-9_]+=)/);
+            cookies.forEach(cookie => {
+                const cleaned = cookie.replace(/Domain=[^;]+;?\s*/i, '').replace(/Path=[^;]+;?\s*/i, 'Path=/;');
+                res.appendHeader('Set-Cookie', cleaned);
+            });
+            res.setHeader('x-set-cookie', upstreamSetCookie);
+        }
+
         // クライアント側でJSから読み取れるように公開する
-        res.setHeader('Access-Control-Expose-Headers', 'x-res-url');
+        res.setHeader('Access-Control-Expose-Headers', 'x-res-url, x-set-cookie');
 
         const contentType = upstream.headers.get('content-type') || 'application/octet-stream';
         res.setHeader('Content-Type', contentType);

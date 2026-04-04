@@ -61,17 +61,69 @@ try {
     favThreads = JSON.parse(localStorage.getItem('peta2_fav_threads') || '[]');
 } catch (e) {}
 
+// --- Cookie管理クラス ---
+const CookieManager = {
+    getCookies(domain) {
+        try {
+            const allCookies = JSON.parse(localStorage.getItem('peta2_cookies') || '{}');
+            return allCookies[domain] || '';
+        } catch (e) { return ''; }
+    },
+    saveCookies(domain, setCookieHeader) {
+        if (!setCookieHeader) return;
+        try {
+            const allCookies = JSON.parse(localStorage.getItem('peta2_cookies') || '{}');
+            let currentCookies = this.parseCookieString(allCookies[domain] || '');
+            
+            // Set-Cookieヘッダーは複数の場合があるが、プロキシ経由では1つの文字列に結合されている可能性がある
+            const newCookies = setCookieHeader.split(/,(?=\s*[a-zA-Z0-9_]+=)/);
+            newCookies.forEach(cookie => {
+                const parts = cookie.split(';')[0].split('=');
+                if (parts.length >= 2) {
+                    const name = parts[0].trim();
+                    const value = parts.slice(1).join('=').trim();
+                    currentCookies[name] = value;
+                }
+            });
+            
+            allCookies[domain] = Object.entries(currentCookies)
+                .map(([n, v]) => `${n}=${v}`)
+                .join('; ');
+            localStorage.setItem('peta2_cookies', JSON.stringify(allCookies));
+        } catch (e) { console.error('Cookie save error:', e); }
+    },
+    parseCookieString(str) {
+        const obj = {};
+        if (!str) return obj;
+        str.split(';').forEach(c => {
+            const parts = c.split('=');
+            if (parts.length >= 2) {
+                obj[parts[0].trim()] = parts.slice(1).join('=').trim();
+            }
+        });
+        return obj;
+    }
+};
+
 // --- 認証付きFetch共通関数 ---
 async function authedFetch(url, options = {}) {
     if (!options.headers) options.headers = {};
     options.headers['X-Access-Key'] = ACCESS_KEY;
 
-    // スレIDを特定して、保存された鍵があればヘッダーに追加
+    let targetUrlStr = url;
     try {
         const urlObj = new URL(url.startsWith('/') ? window.location.origin + url : url);
-        const targetUrlStr = urlObj.searchParams.get('url');
-        if (targetUrlStr) {
-            const targetUrl = new URL(targetUrlStr);
+        const proxyTarget = urlObj.searchParams.get('url');
+        if (proxyTarget) {
+            targetUrlStr = proxyTarget;
+            const targetDomain = new URL(proxyTarget).hostname;
+            const savedCookies = CookieManager.getCookies(targetDomain);
+            if (savedCookies) {
+                options.headers['Cookie'] = savedCookies;
+            }
+
+            // スレIDを特定して、保存された鍵があればヘッダーに追加
+            const targetUrl = new URL(proxyTarget);
             const tId = targetUrl.searchParams.get('t');
             if (tId && threadKeys.has(tId)) {
                 options.headers['X-Peta2-Item-Key'] = threadKeys.get(tId);
@@ -81,6 +133,15 @@ async function authedFetch(url, options = {}) {
 
     const response = await fetch(url, options);
     
+    // Cookieの保存
+    const setCookie = response.headers.get('x-set-cookie');
+    if (setCookie) {
+        try {
+            const targetDomain = new URL(targetUrlStr).hostname;
+            CookieManager.saveCookies(targetDomain, setCookie);
+        } catch(e) {}
+    }
+
     if (response.status === 401) {
         // 認証エラー時はキーを破棄してログイン画面を表示
         ACCESS_KEY = '';
@@ -694,17 +755,53 @@ function openScrapPage() {
 async function fetchThreads() {
     const listContainer = document.getElementById('thread-list');
     listContainer.innerHTML = '<li class="loading-text">スレッドを取得中...</li>';
+    const gallery = document.getElementById('gallery-container');
 
     try {
         const response = await authedFetch(PROXY_BASE + encodeURIComponent(SITE_URL));
+        const resUrl = response.headers.get('x-res-url') || SITE_URL;
+        
+        // 門限ページ検知 (enter.php 等)
+        if (resUrl.includes('enter.php') || resUrl.includes('agreement.php')) {
+            showGatekeeperUI(resUrl);
+            listContainer.innerHTML = '<li class="loading-text" style="color:#ff4757;">⚠️ 入室操作が必要です</li>';
+            return;
+        }
+
         const contentType = response.headers.get('content-type') || '';
         const charset = contentType.toLowerCase().includes('utf-8') ? 'utf-8' : 'shift-jis';
         
         const buffer = await response.arrayBuffer();
         const decoder = new TextDecoder(charset);
-        const doc = new DOMParser().parseFromString(decoder.decode(buffer), 'text/html');
+        const html = decoder.decode(buffer);
+        const doc = new DOMParser().parseFromString(html, 'text/html');
         
-        const listItems = doc.querySelectorAll('.thread-list .list-group-item, #owl-carousel .list-group-item');
+        let listItems = doc.querySelectorAll('.thread-list .list-group-item, #owl-carousel .list-group-item');
+        
+        // HTMLで見つからない場合、APIを試す (汎用的対応)
+        if (listItems.length === 0) {
+            console.log('[fetchThreads] No threads in HTML, trying API...');
+            const apiUrl = new URL('api/threads.php?page=1', SITE_URL).href;
+            try {
+                const apiRes = await authedFetch(PROXY_BASE + encodeURIComponent(apiUrl));
+                if (apiRes.ok) {
+                    const data = await apiRes.json();
+                    if (data && data.threads) {
+                        currentThreads = data.threads.map(t => ({
+                            url: new URL(`thread.php?t=${t.t}`, SITE_URL).href,
+                            title: t.title,
+                            postCount: t.res_count,
+                            meta: t.last_res_time || ''
+                        }));
+                        renderThreadList();
+                        return;
+                    }
+                }
+            } catch (apiErr) {
+                console.warn('API fetch failed:', apiErr);
+            }
+        }
+
         if (listItems.length === 0) {
             listContainer.innerHTML = '<li class="loading-text">スレッドが見つかりません。</li>';
             return;
@@ -736,6 +833,25 @@ async function fetchThreads() {
             listContainer.innerHTML = `<li class="loading-text">取得失敗: ${escapeHTML(e.message)}</li>`;
         }
     }
+}
+
+function showGatekeeperUI(url) {
+    const gallery = document.getElementById('gallery-container');
+    gallery.innerHTML = `
+        <div class="gatekeeper-panel">
+            <div class="gatekeeper-header">
+                <h3>🚪 入室ゲートを検知しました</h3>
+                <p>以下の画面で「ENTER」や「同意する」を押してサイトに入ってください。<br>操作完了後、「入室完了」ボタンを押すとスレッド一覧を読み込みます。</p>
+                <button id="gatekeeper-done-btn" class="primary-btn">入室完了したので再読み込み</button>
+            </div>
+            <iframe src="${PROXY_BASE + encodeURIComponent(url)}" class="gatekeeper-iframe"></iframe>
+        </div>
+    `;
+    
+    document.getElementById('gatekeeper-done-btn').onclick = () => {
+        gallery.innerHTML = '<div class="empty-state"><p>再読み込み中...</p></div>';
+        fetchThreads();
+    };
 }
 
 function renderThreadList() {
